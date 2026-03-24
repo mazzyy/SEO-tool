@@ -3,7 +3,6 @@
 import asyncio
 import re
 from .scraper import fetch_page, parse_html
-from .ai_client import ask_ai
 
 
 # ── Signature patterns for common technologies ─────────────────
@@ -464,7 +463,7 @@ def _structure_results(detected: dict[str, dict], url: str) -> dict:
 
 
 async def detect(url: str) -> dict:
-    """Main entry point: scrape the page then optionally ask AI for a summary."""
+    """Main entry point: scrape the page and detect technologies."""
     resp = await asyncio.to_thread(fetch_page, url)
     if resp is None:
         return {"error": f"Could not fetch {url}. Check the URL and try again."}
@@ -473,26 +472,5 @@ async def detect(url: str) -> dict:
     detected = _detect_from_html(resp.text, soup, resp)
     result = _structure_results(detected, url)
 
-    # Only call AI if we want a polished summary on top of raw detection
-    if len(detected) >= 3:
-        # Build a concise text version for the AI prompt
-        report_lines = []
-        for cat, techs in result["categories"].items():
-            report_lines.append(f"### {cat}")
-            for t in techs:
-                report_lines.append(f"  • {t['name']} [{t['confidence']}] — {', '.join(t['evidence'])}")
-        report_text = "\n".join(report_lines)
-
-        try:
-            summary = await ask_ai(
-                "You are a web technology analyst. Given a raw technology detection report, "
-                "add brief SEO impact notes for each detected technology and provide 3-5 "
-                "actionable recommendations. Keep it concise.",
-                f"Here is the detection report:\n\n{report_text}\n\nAdd SEO impact notes and recommendations.",
-                1500,
-            )
-            result["ai_summary"] = summary
-        except Exception:
-            pass  # If AI fails, return without summary
-
     return result
+

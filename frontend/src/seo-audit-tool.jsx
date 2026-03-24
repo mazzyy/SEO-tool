@@ -729,17 +729,7 @@ function TechDetector() {
             </div>
           </div>
 
-          {/* AI Summary */}
-          {r.ai_summary && (
-            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20, borderLeft: "3px solid #d500f9" }}>
-              <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#d500f9", letterSpacing: 0.5, textTransform: "uppercase" }}>
-                🤖 AI Analysis & SEO Impact
-              </h4>
-              <div style={{ color: "#c8d6e5", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "'IBM Plex Sans', sans-serif" }}>
-                {r.ai_summary}
-              </div>
-            </div>
-          )}
+
         </div>
       )}
     </div>
