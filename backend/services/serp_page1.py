@@ -90,54 +90,35 @@ def _ensure_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 # Tier 1: Serper.dev API
 # ---------------------------------------------------------------------------
-async def _serper_search(keyword: str, num_pages: int = 5) -> Optional[list[dict]]:
-    """
-    Query Serper.dev API, paginating through `num_pages` Google result pages.
-    Each page = 10 results = 1 API credit.
-    """
+async def _serper_search(keyword: str, num_results: int = 100) -> Optional[list[dict]]:
     api_key = os.getenv("SERPER_API_KEY")
     if not api_key:
         return None
 
-    all_results = []
-    position = 1
-
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            for page_num in range(1, num_pages + 1):
-                resp = await client.post(
-                    "https://google.serper.dev/search",
-                    headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
-                    json={"q": keyword, "num": 10, "page": page_num},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            resp = await client.post(
+                "https://google.serper.dev/search",
+                headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+                json={"q": keyword, "num": min(num_results, 100)},
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-                organic = data.get("organic", [])
-                if not organic:
-                    break  # No more results
-
-                for item in organic:
-                    all_results.append({
-                        "position": item.get("position", position),
-                        "title": item.get("title", ""),
-                        "link": item.get("link", ""),
-                        "snippet": item.get("snippet", ""),
-                    })
-                    position += 1
-
-                logger.info(f"[Serper] Page {page_num}: {len(organic)} results for '{keyword}'")
-
-                # Small delay between pages to be polite
-                if page_num < num_pages:
-                    await asyncio.sleep(0.3)
-
-        logger.info(f"[Serper] Total: {len(all_results)} results across {num_pages} pages for '{keyword}'")
-        return all_results if all_results else None
+        results = []
+        for i, item in enumerate(data.get("organic", []), start=1):
+            results.append({
+                "position": item.get("position", i),
+                "title": item.get("title", ""),
+                "link": item.get("link", ""),
+                "snippet": item.get("snippet", ""),
+            })
+        logger.info(f"[Serper] Got {len(results)} results for '{keyword}'")
+        return results
 
     except Exception as e:
         logger.warning(f"[Serper] Failed for '{keyword}': {e}")
-        return all_results if all_results else None
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +265,7 @@ async def analyze(url: str, keywords: list[str], max_pages: int = 5) -> str:
         source = None
 
         # Tier 1: Serper.dev
-        search_results = await _serper_search(keyword, num_pages=max_pages)
+        search_results = await _serper_search(keyword, num_results=max_pages * 10)
         if search_results:
             source = "serper_api"
         else:

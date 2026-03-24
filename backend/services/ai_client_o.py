@@ -56,7 +56,8 @@ async def ask_ai(system_prompt: str, user_content: str, max_tokens: int = 800) -
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            max_completion_tokens=max_tokens,
+            max_tokens=max_tokens,
+            temperature=0.3,
         )
         return resp.choices[0].message.content or ""
     except Exception as e:
@@ -82,7 +83,8 @@ async def ask_ai_json(system_prompt: str, user_content: str, max_tokens: int = 8
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            max_completion_tokens=max_tokens,
+            max_tokens=max_tokens,
+            temperature=0.3,
         )
         text = resp.choices[0].message.content or ""
 
