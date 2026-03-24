@@ -994,19 +994,57 @@ function FullAudit() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState("");
+  const [expandedIssue, setExpandedIssue] = useState(null);
+  const [expandedSection, setExpandedSection] = useState({});
 
   const runAudit = async () => {
     if (!url.trim()) return;
     setLoading(true); setResults(null);
-    const stages = ["Crawling site structure...", "Checking meta tags & headings...", "Analyzing content quality...", "Evaluating backlink profile...", "Checking technical SEO...", "Generating recommendations..."];
+    const stages = ["Fetching page...", "Checking technical SEO...", "Analyzing on-page elements...", "Checking robots.txt & sitemap...", "Computing scores...", "Generating AI insights..."];
     let si = 0;
-    const iv = setInterval(() => { si = (si + 1) % stages.length; setStage(stages[si]); }, 3000);
+    const iv = setInterval(() => { si = (si + 1) % stages.length; setStage(stages[si]); }, 2500);
     try {
       setStage(stages[0]);
       const resp = await callBackend("audit", { url: url.trim() });
       setResults(resp);
-    } catch (e) { setResults("Error: " + e.message); }
+    } catch (e) { setResults({ error: "Error: " + e.message }); }
     clearInterval(iv); setLoading(false); setStage("");
+  };
+
+  const r = results && typeof results === "object" && !results.error ? results : null;
+
+  const sevColor = { critical: "#ff1744", warning: "#ff9100", info: "#00e5ff" };
+  const sevIcon = { critical: "🔴", warning: "🟡", info: "🔵" };
+
+  const catMeta = {
+    technical: { label: "Technical SEO", icon: "⚙️", color: "#00e5ff", weight: "25%" },
+    on_page: { label: "On-Page SEO", icon: "📝", color: "#76ff03", weight: "25%" },
+    content: { label: "Content Quality", icon: "📖", color: "#ffd600", weight: "20%" },
+    crawlability: { label: "Crawlability", icon: "🕷️", color: "#d500f9", weight: "15%" },
+    social: { label: "Social & Sharing", icon: "🔗", color: "#ff4081", weight: "15%" },
+  };
+
+  const toggleSection = (s) => setExpandedSection(prev => ({ ...prev, [s]: !prev[s] }));
+
+  // Score ring SVG
+  const ScoreRing = ({ score, size = 140, label }) => {
+    const rad = (size - 14) / 2;
+    const circ = 2 * Math.PI * rad;
+    const offset = circ - (score / 100) * circ;
+    const color = score >= 80 ? "#00e676" : score >= 60 ? "#ffd600" : score >= 40 ? "#ff9100" : "#ff1744";
+    return (
+      <div style={{ textAlign: "center" }}>
+        <svg width={size} height={size}>
+          <circle cx={size/2} cy={size/2} r={rad} fill="none" stroke="#1a2d42" strokeWidth={7} />
+          <circle cx={size/2} cy={size/2} r={rad} fill="none" stroke={color} strokeWidth={7}
+            strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+            transform={`rotate(-90 ${size/2} ${size/2})`} style={{ transition: "stroke-dashoffset 1.2s ease" }} />
+          <text x={size/2} y={size/2 - 6} textAnchor="middle" fill="#fff" fontSize={size/3.2} fontWeight={700}>{score}</text>
+          <text x={size/2} y={size/2 + 14} textAnchor="middle" fill="#5a7a95" fontSize={9}>/100</text>
+        </svg>
+        {label && <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginTop: 4 }}>{label}</div>}
+      </div>
+    );
   };
 
   return (
@@ -1018,7 +1056,278 @@ function FullAudit() {
       <button onClick={runAudit} disabled={loading} style={{ ...styles.primaryBtn, background: loading ? "#1a2d42" : "linear-gradient(135deg, #d500f9, #aa00ff)" }}>
         {loading ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={16} color="#fff" /> {stage}</span> : "🔍 Run Full SEO Audit"}
       </button>
-      {results && <div style={{ marginTop: 24 }}><ResultBlock title="Complete SEO Audit Report" content={results} color="#d500f9" /></div>}
+
+      {results && typeof results === "string" && <div style={{ marginTop: 24 }}><ResultBlock title="Error" content={results} color="#ff1744" /></div>}
+      {results && results.error && <div style={{ marginTop: 24 }}><ResultBlock title="Error" content={results.error} color="#ff1744" /></div>}
+
+      {r && (
+        <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 20 }}>
+
+          {/* Top: Overall score + summary */}
+          <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 20 }}>
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+              <ScoreRing score={r.scores?.overall || 0} size={150} label="SEO Score" />
+              <div style={{ fontSize: 11, color: "#5a7a95", marginTop: 6 }}>
+                {r.scores?.overall >= 80 ? "Excellent" : r.scores?.overall >= 60 ? "Good" : r.scores?.overall >= 40 ? "Needs Work" : "Critical"}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap", justifyContent: "center" }}>
+                {r.issue_counts?.critical > 0 && <span style={{ background: "#ff174420", color: "#ff1744", padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 600 }}>{r.issue_counts.critical} Critical</span>}
+                {r.issue_counts?.warning > 0 && <span style={{ background: "#ff910020", color: "#ff9100", padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 600 }}>{r.issue_counts.warning} Warning</span>}
+                {r.issue_counts?.info > 0 && <span style={{ background: "#00e5ff20", color: "#00e5ff", padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 600 }}>{r.issue_counts.info} Info</span>}
+              </div>
+            </div>
+
+            {/* Category bar chart */}
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <div style={{ fontSize: 11, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 16, fontWeight: 600 }}>Category Scores</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {Object.entries(catMeta).map(([key, meta]) => {
+                  const val = r.scores?.[key] || 0;
+                  const barCol = val >= 80 ? "#00e676" : val >= 60 ? "#ffd600" : val >= 40 ? "#ff9100" : "#ff1744";
+                  return (
+                    <div key={key}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: "#c8d6e5", fontWeight: 600 }}>{meta.icon} {meta.label}</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: barCol }}>{val}<span style={{ fontSize: 9, color: "#5a7a95" }}>/100</span></span>
+                      </div>
+                      <div style={{ height: 8, background: "#0a1628", borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ height: "100%", borderRadius: 4, width: `${val}%`, background: `linear-gradient(90deg, ${meta.color}90, ${barCol})`, transition: "width 1s ease", boxShadow: `0 0 8px ${meta.color}30` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Key metrics row */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
+            {[
+              { label: "Response", value: `${r.data?.technical?.response_time_ms || "?"}ms`, icon: "⚡", color: (r.data?.technical?.response_time_ms || 9999) < 1000 ? "#00e676" : "#ff9100" },
+              { label: "Page Size", value: `${r.data?.technical?.page_size_kb || "?"}KB`, icon: "📦", color: "#00e5ff" },
+              { label: "Words", value: r.data?.on_page?.word_count || 0, icon: "📝", color: (r.data?.on_page?.word_count || 0) >= 300 ? "#00e676" : "#ff9100" },
+              { label: "Links", value: r.data?.on_page?.total_links || 0, icon: "🔗", color: "#d500f9" },
+              { label: "Images", value: r.data?.on_page?.total_images || 0, icon: "🖼️", color: "#ffd600" },
+              { label: "Checks", value: `${r.check_summary?.passed || 0}/${r.check_summary?.total || 0}`, icon: "✅", color: "#00e676" },
+            ].map((m, i) => (
+              <div key={i} style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 16 }}>{m.icon}</div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: m.color }}>{m.value}</div>
+                <div style={{ fontSize: 10, color: "#5a7a95", fontWeight: 600 }}>{m.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Pass/Fail Checklist */}
+          {r.checks && r.checks.length > 0 && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <h4 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#d500f9", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                  SEO Checklist — {r.check_summary?.passed}/{r.check_summary?.total} Passed
+                </h4>
+                <div style={{ height: 6, width: 120, background: "#0a1628", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${((r.check_summary?.passed || 0) / Math.max(r.check_summary?.total || 1, 1)) * 100}%`, background: "linear-gradient(90deg, #d500f9, #00e676)", borderRadius: 3, transition: "width 1s ease" }} />
+                </div>
+              </div>
+
+              {/* Group by section */}
+              {[...new Set(r.checks.map(c => c.section))].map(section => {
+                const sectionChecks = r.checks.filter(c => c.section === section);
+                const passedCount = sectionChecks.filter(c => c.passed).length;
+                const isOpen = expandedSection[section] !== false;
+                return (
+                  <div key={section} style={{ marginBottom: 10 }}>
+                    <div onClick={() => toggleSection(section)} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      padding: "8px 12px", background: "#0a1628", borderRadius: 8, cursor: "pointer",
+                      border: "1px solid #1a2d42"
+                    }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#c8d6e5" }}>
+                        {section} <span style={{ color: "#5a7a95", fontWeight: 400 }}>({passedCount}/{sectionChecks.length})</span>
+                      </span>
+                      <span style={{ color: "#5a7a95", fontSize: 12, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
+                    </div>
+                    {isOpen && (
+                      <div style={{ padding: "6px 0 0 0" }}>
+                        {sectionChecks.map((check, ci) => (
+                          <div key={ci} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 14px", borderBottom: "1px solid #0d1b2a08" }}>
+                            <span style={{ fontSize: 14, width: 20, textAlign: "center" }}>{check.passed ? "✅" : "❌"}</span>
+                            <span style={{ fontSize: 12, color: check.passed ? "#8899aa" : "#e0e6ed", flex: 1 }}>{check.name}</span>
+                            {check.value && <span style={{ fontSize: 11, color: check.passed ? "#5a7a95" : "#ff9100", fontFamily: "monospace" }}>{check.value}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Meta Tag Preview */}
+          {r.data?.on_page && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <h4 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 600, color: "#76ff03", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                🔍 Google Search Preview
+              </h4>
+              <div style={{ background: "#fff", borderRadius: 10, padding: 16, maxWidth: 600 }}>
+                <div style={{ fontSize: 18, color: "#1a0dab", fontWeight: 400, lineHeight: 1.3, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "Arial, sans-serif" }}>
+                  {r.data.on_page.title || "No title tag found"}
+                </div>
+                <div style={{ fontSize: 13, color: "#006621", marginBottom: 3, fontFamily: "Arial, sans-serif" }}>
+                  {r.url}
+                </div>
+                <div style={{ fontSize: 13, color: "#545454", lineHeight: 1.5, fontFamily: "Arial, sans-serif", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                  {r.data.on_page.meta_description || "No meta description found. Google will auto-generate a snippet from page content."}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 11, color: "#5a7a95" }}>
+                <span>Title: <span style={{ color: 30 <= (r.data.on_page.title_length || 0) && (r.data.on_page.title_length || 0) <= 60 ? "#00e676" : "#ff9100", fontWeight: 600 }}>{r.data.on_page.title_length || 0} chars</span></span>
+                <span>Description: <span style={{ color: 70 <= (r.data.on_page.meta_desc_length || 0) && (r.data.on_page.meta_desc_length || 0) <= 160 ? "#00e676" : "#ff9100", fontWeight: 600 }}>{r.data.on_page.meta_desc_length || 0} chars</span></span>
+              </div>
+            </div>
+          )}
+
+          {/* On-Page Details cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            {/* Heading Structure */}
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#ffd600", letterSpacing: 0.5, textTransform: "uppercase" }}>📑 Heading Structure</h4>
+              {[1,2,3,4,5,6].map(level => {
+                const count = r.data?.on_page?.[`h${level}_count`] || 0;
+                const texts = r.data?.on_page?.[`h${level}_texts`] || [];
+                if (count === 0 && level > 3) return null;
+                return (
+                  <div key={level} style={{ marginBottom: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: level === 1 ? (count === 1 ? "#00e676" : "#ff1744") : "#c8d6e5", background: "#0a1628", padding: "2px 8px", borderRadius: 4, fontFamily: "monospace" }}>H{level}</span>
+                      <span style={{ fontSize: 12, color: count > 0 ? "#c8d6e5" : "#5a7a95" }}>{count} tag{count !== 1 ? "s" : ""}</span>
+                    </div>
+                    {texts.length > 0 && texts.map((t, i) => (
+                      <div key={i} style={{ fontSize: 11, color: "#5a7a95", paddingLeft: 20 + level * 8, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>"{t}"</div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Link & Image Analysis */}
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>🔗 Links & Images</h4>
+              {[
+                { label: "Total Links", value: r.data?.on_page?.total_links || 0, color: "#00e5ff" },
+                { label: "Internal Links", value: r.data?.on_page?.internal_links || 0, color: "#76ff03" },
+                { label: "External Links", value: r.data?.on_page?.external_links || 0, color: "#ffd600" },
+                { label: "Nofollow Links", value: r.data?.on_page?.nofollow_links || 0, color: "#ff4081" },
+                { label: "Total Images", value: r.data?.on_page?.total_images || 0, color: "#00e5ff" },
+                { label: "Missing Alt Text", value: r.data?.on_page?.images_without_alt || 0, color: (r.data?.on_page?.images_without_alt || 0) > 0 ? "#ff9100" : "#00e676" },
+              ].map((item, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #0a1628" }}>
+                  <span style={{ fontSize: 12, color: "#8899aa" }}>{item.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: item.color, fontFamily: "monospace" }}>{item.value}</span>
+                </div>
+              ))}
+
+              <h4 style={{ margin: "14px 0 10px", fontSize: 13, fontWeight: 600, color: "#ff4081", letterSpacing: 0.5, textTransform: "uppercase" }}>📱 Social Tags</h4>
+              {[
+                { label: "Open Graph", value: r.data?.on_page?.og_tags || 0, ok: (r.data?.on_page?.og_tags || 0) >= 3 },
+                { label: "OG Image", value: r.data?.on_page?.og_image ? "✅" : "❌", ok: !!r.data?.on_page?.og_image },
+                { label: "Twitter Cards", value: r.data?.on_page?.twitter_cards || 0, ok: (r.data?.on_page?.twitter_cards || 0) >= 2 },
+              ].map((item, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #0a1628" }}>
+                  <span style={{ fontSize: 12, color: "#8899aa" }}>{item.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: item.ok ? "#00e676" : "#ff9100" }}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Crawlability Panel */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#d500f9", letterSpacing: 0.5, textTransform: "uppercase" }}>🤖 robots.txt</h4>
+              <div style={{ fontSize: 13, color: r.data?.robots?.exists ? "#00e676" : "#ff1744", fontWeight: 600, marginBottom: 6 }}>
+                {r.data?.robots?.exists ? "✅ Found" : "❌ Not Found"}
+              </div>
+              {r.data?.robots?.exists && (
+                <>
+                  <div style={{ fontSize: 12, color: "#8899aa", marginBottom: 4 }}>Sitemap reference: {r.data.robots.has_sitemap_ref ? "✅" : "❌"}</div>
+                  <div style={{ fontSize: 12, color: "#8899aa", marginBottom: 8 }}>Disallow rules: {r.data.robots.disallow_count || 0}</div>
+                  {r.data.robots.content_preview && (
+                    <pre style={{ fontSize: 10, color: "#5a7a95", background: "#0a1628", padding: 10, borderRadius: 6, overflow: "auto", maxHeight: 100, margin: 0, whiteSpace: "pre-wrap" }}>
+                      {r.data.robots.content_preview}
+                    </pre>
+                  )}
+                </>
+              )}
+            </div>
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#d500f9", letterSpacing: 0.5, textTransform: "uppercase" }}>🗺️ sitemap.xml</h4>
+              <div style={{ fontSize: 13, color: r.data?.sitemap?.exists ? "#00e676" : "#ff1744", fontWeight: 600, marginBottom: 6 }}>
+                {r.data?.sitemap?.exists ? "✅ Found" : "❌ Not Found"}
+              </div>
+              {r.data?.sitemap?.exists && (
+                <>
+                  <div style={{ fontSize: 12, color: "#8899aa", marginBottom: 4 }}>URLs listed: {r.data.sitemap.url_count || 0}</div>
+                  <div style={{ fontSize: 12, color: "#8899aa" }}>Has lastmod dates: {r.data.sitemap.has_lastmod ? "✅" : "❌"}</div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Issues */}
+          {r.issues && r.issues.length > 0 && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <h4 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 600, color: "#ff1744", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                ⚠️ Issues Found ({r.issues.length})
+              </h4>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {r.issues.map((issue, i) => (
+                  <div key={i} style={{
+                    background: "#0a1628", borderRadius: 10, border: `1px solid ${sevColor[issue.severity]}30`,
+                    borderLeft: `3px solid ${sevColor[issue.severity]}`, overflow: "hidden", cursor: "pointer",
+                  }} onClick={() => setExpandedIssue(expandedIssue === i ? null : i)}>
+                    <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span>{sevIcon[issue.severity]}</span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: "#e0e6ed" }}>{issue.title}</div>
+                          <div style={{ fontSize: 10, color: "#5a7a95", marginTop: 2 }}>
+                            <span style={{ background: `${sevColor[issue.severity]}20`, color: sevColor[issue.severity], padding: "1px 6px", borderRadius: 4, marginRight: 6, fontSize: 9, fontWeight: 600, textTransform: "uppercase" }}>{issue.severity}</span>
+                            {issue.section} • Priority {issue.priority}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ color: "#5a7a95", fontSize: 12, transform: expandedIssue === i ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
+                    </div>
+                    {expandedIssue === i && (
+                      <div style={{ padding: "0 14px 12px", borderTop: "1px solid #1a2d42" }}>
+                        <div style={{ fontSize: 12, color: "#8899aa", lineHeight: 1.6, marginTop: 8 }}>{issue.detail}</div>
+                        <div style={{ marginTop: 8, padding: "8px 12px", background: "#0d1b2a", borderRadius: 8, borderLeft: "2px solid #00e676" }}>
+                          <div style={{ fontSize: 10, color: "#00e676", fontWeight: 600, textTransform: "uppercase", marginBottom: 3 }}>How to Fix</div>
+                          <div style={{ fontSize: 12, color: "#c8d6e5", lineHeight: 1.5 }}>{issue.fix}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* AI Analysis */}
+          {r.ai_analysis && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20, borderLeft: "3px solid #d500f9" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#d500f9", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                🤖 AI Expert Analysis
+              </h4>
+              <div style={{ color: "#c8d6e5", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "'IBM Plex Sans', sans-serif" }}>
+                {r.ai_analysis}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

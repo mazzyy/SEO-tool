@@ -103,19 +103,32 @@ Below is an explanation of exactly how each of the 8 service modules functions u
   4. **AI Summary:** The raw JSON report is passed to the LLM solely to append a brief SEO impact analysis for the detected stack.
 
 ### 3. UI/UX Analysis (`services/uiux.py`)
-- **How it works:** Extracts accessibility and structural data programmatically, then feeds the structured data to the LLM for a heuristic evaluation.
+- **How it works:** A full visual dashboard that extracts accessibility and structural data programmatically, computing precise scores across 6 categories, and feeding the data to the LLM for heuristic evaluation.
 - **Workflow:**
-  1. **Extraction:** It counts images missing alt text, extracts the H1-H6 hierarchy, checks for the viewport meta tag, maps input fields against label tags, and counts ARIA roles and Call-to-Action buttons.
-  2. **Formatting:** This data is formatted into a concise, readable summary.
-  3. **AI Evaluation:** The summary is sent to the LLM, tasking it to act as a UI/UX auditor, assigning a score out of 100 based on the hard numbers found in step 1.
+  1. **Data Extraction:** Counts images missing alt text, extracts the H1-H6 hierarchy, checks for viewport meta tags, maps input fields against label tags, and detects ARIA roles and Call-to-Action conversion buttons.
+  2. **Programmatic Scoring:** The backend computes a weighted overall UX Score (0-100) and individual category scores for Visual Hierarchy, Navigation, Mobile Responsiveness, Accessibility, Content Readability, and Trust & Conversion.
+  3. **Interactive Dashboard:** The frontend renders a rich visual interface, including:
+     - An animated circular score ring for the overall UX score.
+     - A six-axis radar chart visualizing the category breakdown.
+     - Individual progress bar score cards for each category.
+     - Data summary metrics calculating Links, CTAs, Images, and ARIA roles.
+     - Expandable priority issue cards detailing the severity (Critical, Warning, Info) and a recommended fix.
+  4. **AI Recommendations:** The LLM analyzes the structured JSON data to provide a concise, actionable summary and expert recommendations.
 
 ### 4. Full SEO Audit (`services/audit.py`)
-- **How it works:** Conducts a broad baseline technical and on-page review.
+- **How it works:** A comprehensive, heavily visualized audit of technical, on-page, and crawlability factors, combined with AI-driven priority action planning.
 - **Workflow:**
-  1. **Technical Checks:** Measures response time, checks for HTTPS, reads the canonical tag, and counts `hreflang` tags and JSON-LD structured data blocks.
-  2. **On-Page Checks:** Measures title and meta description lengths (flagging them if they operate outside the 30-60 and 70-160 character boundaries respectively), and counts Open Graph / Twitter tags.
-  3. **Robots & Sitemap:** Explicitly attempts to fetch `/robots.txt` and `/sitemap.xml`, parsing their contents to count disallow directives and URLs.
-  4. **AI Scoring:** Passes the aggregated metrics to the LLM to write out a prioritized 3-stage action plan (Quick Wins, Short-term, Long-term).
+  1. **Technical & On-Page Checks:** Measures server response times, HTTPS, canonical tags, hreflang, structured data (JSON-LD), viewport, charset, favicon, and language attributes. It evaluates title and meta description lengths against best practices, and counts Open Graph / Twitter tags.
+  2. **Crawlability Verification:** Explicitly attempts to fetch and parse `/robots.txt` and `/sitemap.xml`, checking for sitemap references, disallow directives, URL counts, and lastmod configurations.
+  3. **Data Structuring & Scoring:** The backend generates an extensive JSON response containing raw data, a 25+ item pass/fail checklist, prioritized issues, and 5 discrete category scores (Technical SEO, On-Page SEO, Content Quality, Crawlability, Social & Sharing) alongside the combined Overall SEO Score.
+  4. **Interactive Dashboard:** The frontend displays:
+     - A master animated circular score ring.
+     - Horizontal gradient bar charts for the 5 SEO category scores.
+     - A comprehensive, grouped pass/fail SEO checklist with accordion dropdowns.
+     - A dynamic Google Search Snippet Preview mimicking how the page will appear in SERPs.
+     - Expandable, color-coded priority issue cards (Critical, Warning, Info) containing clear instructions on "How to Fix" each problem.
+     - Detailed data modules for Heading Structure, Link Analysis (Internal vs External), and Social Tags.
+  5. **AI Analysis:** The raw metrics are fed to the LLM to generate an Executive Summary, top priority fixes, quick wins, and competitive edge tips.
 
 ### 5. Performance & Lighthouse (`services/performance.py`)
 - **How it works:** Completely replaces LLM estimation with real-world metrics from Google's infrastructure.
