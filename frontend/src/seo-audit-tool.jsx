@@ -463,16 +463,22 @@ function TechDetector() {
 
   const CATEGORY_META = {
     "Frontend Framework": { color: "#61dafb", icon: "⚛️" },
+    "Backend Framework": { color: "#68d391", icon: "⚙️" },
+    "Programming Language": { color: "#e879f9", icon: "💻" },
     "CSS Framework": { color: "#38bdf8", icon: "🎨" },
     "CMS / Platform": { color: "#a78bfa", icon: "🏗️" },
     "JavaScript Library": { color: "#fbbf24", icon: "📦" },
+    "State Management": { color: "#c084fc", icon: "🗃️" },
+    "Build Tool": { color: "#a3e635", icon: "🔨" },
     "Analytics & Tracking": { color: "#f87171", icon: "📈" },
-    "CDN & Performance": { color: "#34d399", icon: "🚀" },
+    "Hosting & CDN": { color: "#34d399", icon: "🚀" },
     "UI & Design": { color: "#f472b6", icon: "✨" },
     "Third-Party Services": { color: "#fb923c", icon: "🔌" },
     "SEO & Metadata": { color: "#60a5fa", icon: "🏷️" },
     "Security": { color: "#4ade80", icon: "🔒" },
     "Server & Infrastructure": { color: "#94a3b8", icon: "🖥️" },
+    "Progressive Web": { color: "#22d3ee", icon: "📱" },
+    "Other": { color: "#9ca3af", icon: "🔹" },
   };
 
   const confColor = { High: "#00e676", Medium: "#ffd600", Low: "#ff9100" };
