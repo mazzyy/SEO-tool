@@ -221,8 +221,7 @@ async def detect(url: str) -> dict:
         report_text = "\n".join(report_lines)
 
         try:
-            summary = await asyncio.to_thread(
-                ask_ai,
+            summary = await ask_ai(
                 "You are a web technology analyst. Given a raw technology detection report, "
                 "add brief SEO impact notes for each detected technology and provide 3-5 "
                 "actionable recommendations. Keep it concise.",
