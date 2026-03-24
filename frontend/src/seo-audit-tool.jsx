@@ -459,27 +459,283 @@ function TechDetector() {
   const [url, setUrl] = useState("");
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [expandedCat, setExpandedCat] = useState(null);
+
+  const CATEGORY_META = {
+    "Frontend Framework": { color: "#61dafb", icon: "⚛️" },
+    "CSS Framework": { color: "#38bdf8", icon: "🎨" },
+    "CMS / Platform": { color: "#a78bfa", icon: "🏗️" },
+    "JavaScript Library": { color: "#fbbf24", icon: "📦" },
+    "Analytics & Tracking": { color: "#f87171", icon: "📈" },
+    "CDN & Performance": { color: "#34d399", icon: "🚀" },
+    "UI & Design": { color: "#f472b6", icon: "✨" },
+    "Third-Party Services": { color: "#fb923c", icon: "🔌" },
+    "SEO & Metadata": { color: "#60a5fa", icon: "🏷️" },
+    "Security": { color: "#4ade80", icon: "🔒" },
+    "Server & Infrastructure": { color: "#94a3b8", icon: "🖥️" },
+  };
+
+  const confColor = { High: "#00e676", Medium: "#ffd600", Low: "#ff9100" };
 
   const detect = async () => {
     if (!url.trim()) return;
-    setLoading(true); setResults(null);
+    setLoading(true); setResults(null); setExpandedCat(null);
     try {
       const resp = await callBackend("tech", { url: url.trim() });
       setResults(resp);
-    } catch (e) { setResults("Error: " + e.message); }
+    } catch (e) { setResults({ error: "Error: " + e.message }); }
     setLoading(false);
   };
+
+  // Donut chart helper
+  const DonutChart = ({ categories }) => {
+    const entries = Object.entries(categories);
+    const total = entries.reduce((s, [, techs]) => s + techs.length, 0);
+    if (total === 0) return null;
+    const radius = 56, cx = 80, cy = 80, strokeWidth = 18;
+    const circumference = 2 * Math.PI * radius;
+    let offset = 0;
+    const slices = entries.map(([cat, techs]) => {
+      const fraction = techs.length / total;
+      const dashLen = fraction * circumference;
+      const meta = CATEGORY_META[cat] || { color: "#8899aa" };
+      const slice = { cat, count: techs.length, color: meta.color, dashLen, gapLen: circumference - dashLen, offset };
+      offset += dashLen;
+      return slice;
+    });
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <svg width="160" height="160" viewBox="0 0 160 160">
+          <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#1a2d42" strokeWidth={strokeWidth} />
+          {slices.map((s, i) => (
+            <circle key={i} cx={cx} cy={cy} r={radius} fill="none" stroke={s.color} strokeWidth={strokeWidth}
+              strokeDasharray={`${s.dashLen} ${s.gapLen}`} strokeDashoffset={-s.offset}
+              transform={`rotate(-90 ${cx} ${cy})`}
+              style={{ transition: "stroke-dasharray 0.8s ease, stroke-dashoffset 0.8s ease" }} />
+          ))}
+          <text x={cx} y={cy - 4} textAnchor="middle" fill="#e8f0fe" fontSize="26" fontWeight="700" fontFamily="'Sora', sans-serif">{total}</text>
+          <text x={cx} y={cy + 14} textAnchor="middle" fill="#5a7a95" fontSize="10" fontFamily="'IBM Plex Sans', sans-serif">technologies</text>
+        </svg>
+        {/* Legend */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginTop: 8, maxWidth: 220 }}>
+          {slices.map((s) => (
+            <div key={s.cat} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: s.color, flexShrink: 0 }} />
+              <span style={{ fontSize: 9, color: "#8899aa", whiteSpace: "nowrap" }}>{s.cat} ({s.count})</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const r = results;
 
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
         <label style={styles.label}>Website URL</label>
-        <input style={styles.input} placeholder="https://example.com" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <input style={styles.input} placeholder="https://example.com" value={url} onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && detect()} />
       </div>
       <button onClick={detect} disabled={loading} style={{ ...styles.primaryBtn, background: loading ? "#1a2d42" : "linear-gradient(135deg, #76ff03, #00c853)" }}>
         {loading ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={16} color="#fff" /> Scanning technologies...</span> : "🔧 Detect Technologies"}
       </button>
-      {results && <div style={{ marginTop: 24 }}><ResultBlock title="Technology Stack Detected" content={results} color="#76ff03" /></div>}
+
+      {/* Error state */}
+      {r && r.error && (
+        <div style={{ marginTop: 24, padding: 16, background: "#1a0a0a", border: "1px solid #3a1a1a", borderRadius: 10, color: "#ff4444", fontSize: 13 }}>
+          {r.error}
+        </div>
+      )}
+
+      {/* Results Dashboard */}
+      {r && !r.error && (
+        <div style={{ marginTop: 28, animation: "fadeUp 0.5s ease" }}>
+
+          {/* Stats Bar */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+            {[
+              { label: "Total Technologies", value: r.total_detected || 0, color: "#76ff03" },
+              { label: "Categories", value: Object.keys(r.categories || {}).length, color: "#00e5ff" },
+              { label: "High Confidence", value: r.confidence_summary?.High || 0, color: "#00e676" },
+              { label: "Low Confidence", value: r.confidence_summary?.Low || 0, color: "#ff9100" },
+            ].map((stat) => (
+              <div key={stat.label} style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 8, padding: "10px 16px", flex: "1 1 120px", textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>{stat.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: stat.color, fontFamily: "'Sora', sans-serif" }}>{stat.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Top Row: Donut + Confidence Breakdown */}
+          <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 24, marginBottom: 24, alignItems: "start" }}>
+            <DonutChart categories={r.categories || {}} />
+            {/* Confidence Breakdown */}
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20 }}>
+              <h4 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>Confidence Breakdown</h4>
+              {["High", "Medium", "Low"].map((level) => {
+                const count = r.confidence_summary?.[level] || 0;
+                const pct = r.total_detected > 0 ? (count / r.total_detected) * 100 : 0;
+                return (
+                  <div key={level} style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: confColor[level], fontWeight: 600 }}>{level}</span>
+                      <span style={{ fontSize: 12, color: "#5a7a95" }}>{count} ({Math.round(pct)}%)</span>
+                    </div>
+                    <div style={{ height: 10, background: "#0a1628", borderRadius: 5, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%", borderRadius: 5,
+                        background: `linear-gradient(90deg, ${confColor[level]}, ${confColor[level]}88)`,
+                        width: `${pct}%`, transition: "width 0.8s ease",
+                        boxShadow: `0 0 8px ${confColor[level]}40`,
+                      }} />
+                    </div>
+                  </div>
+                );
+              })}
+              {/* Stacked bar */}
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 }}>Overall Distribution</div>
+                <div style={{ display: "flex", height: 20, borderRadius: 6, overflow: "hidden", background: "#0a1628" }}>
+                  {["High", "Medium", "Low"].map((level) => {
+                    const count = r.confidence_summary?.[level] || 0;
+                    const pct = r.total_detected > 0 ? (count / r.total_detected) * 100 : 0;
+                    return pct > 0 ? (
+                      <div key={level} style={{
+                        width: `${pct}%`, background: confColor[level], display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 9, fontWeight: 700, color: "#0a1628", transition: "width 0.8s ease",
+                      }}>{count}</div>
+                    ) : null;
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Category Cards */}
+          <h4 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 600, color: "#76ff03", letterSpacing: 0.5, textTransform: "uppercase" }}>
+            Detected Technology Stack
+          </h4>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14, marginBottom: 24 }}>
+            {Object.entries(r.categories || {}).map(([cat, techs]) => {
+              const meta = CATEGORY_META[cat] || { color: "#8899aa", icon: "🔹" };
+              const isExpanded = expandedCat === cat;
+              return (
+                <div key={cat} style={{
+                  background: "#0d1b2a", border: `1px solid ${meta.color}25`, borderRadius: 12, overflow: "hidden",
+                  transition: "all 0.3s ease", borderLeft: `3px solid ${meta.color}`,
+                }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = `${meta.color}50`; e.currentTarget.style.boxShadow = `0 4px 20px ${meta.color}12`; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = `${meta.color}25`; e.currentTarget.style.boxShadow = "none"; }}>
+                  {/* Card Header */}
+                  <button onClick={() => setExpandedCat(isExpanded ? null : cat)} style={{
+                    width: "100%", padding: "14px 16px", background: "transparent", border: "none", cursor: "pointer",
+                    display: "flex", justifyContent: "space-between", alignItems: "center", textAlign: "left",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 22 }}>{meta.icon}</span>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#e8f0fe", fontFamily: "'Sora', sans-serif" }}>{cat}</div>
+                        <div style={{ fontSize: 11, color: "#5a7a95", marginTop: 2 }}>{techs.length} {techs.length === 1 ? "technology" : "technologies"} detected</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{
+                        fontSize: 16, fontWeight: 800, padding: "3px 10px", borderRadius: 8,
+                        background: `${meta.color}18`, color: meta.color, fontFamily: "'Sora', sans-serif",
+                      }}>{techs.length}</span>
+                      <span style={{ color: "#5a7a95", fontSize: 14, transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                    </div>
+                  </button>
+                  {/* Tech Pills (always visible) */}
+                  <div style={{ padding: "0 16px 12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {techs.map((t) => (
+                      <span key={t.name} style={{
+                        fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20,
+                        background: `${meta.color}12`, color: meta.color, border: `1px solid ${meta.color}30`,
+                        display: "flex", alignItems: "center", gap: 5,
+                      }}>
+                        {t.name}
+                        <span style={{
+                          fontSize: 8, padding: "1px 5px", borderRadius: 4, fontWeight: 700,
+                          background: `${confColor[t.confidence]}20`, color: confColor[t.confidence],
+                        }}>{t.confidence === "High" ? "H" : t.confidence === "Medium" ? "M" : "L"}</span>
+                      </span>
+                    ))}
+                  </div>
+                  {/* Expanded Detail */}
+                  {isExpanded && (
+                    <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${meta.color}15`, animation: "fadeUp 0.3s ease" }}>
+                      {techs.map((t) => (
+                        <div key={t.name} style={{ padding: "12px 0", borderBottom: "1px solid #1a2d4230" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: "#e8f0fe" }}>{t.name}</span>
+                            <span style={{
+                              fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 6,
+                              background: `${confColor[t.confidence]}15`, color: confColor[t.confidence],
+                            }}>Confidence: {t.confidence}</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Evidence</div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                            {t.evidence.map((e, j) => (
+                              <div key={j} style={{
+                                fontSize: 11, color: "#8899aa", padding: "4px 8px", background: "#0a1628",
+                                borderRadius: 4, borderLeft: `2px solid ${meta.color}50`, fontFamily: "'JetBrains Mono', monospace",
+                              }}>{e}</div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Category Distribution Bar Chart */}
+          <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20, marginBottom: 24 }}>
+            <h4 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>
+              Category Distribution
+            </h4>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {Object.entries(r.categories || {}).sort((a, b) => b[1].length - a[1].length).map(([cat, techs]) => {
+                const meta = CATEGORY_META[cat] || { color: "#8899aa", icon: "🔹" };
+                const pct = r.total_detected > 0 ? (techs.length / r.total_detected) * 100 : 0;
+                return (
+                  <div key={cat} style={{ display: "grid", gridTemplateColumns: "160px 36px 1fr", gap: 10, alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "#c8d6e5", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {meta.icon} {cat}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: meta.color, textAlign: "center" }}>{techs.length}</span>
+                    <div style={{ position: "relative", height: 18, background: "#0a1628", borderRadius: 5, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%", borderRadius: 5,
+                        background: `linear-gradient(90deg, ${meta.color}, ${meta.color}66)`,
+                        width: `${Math.max(4, pct)}%`, transition: "width 0.8s ease",
+                        boxShadow: `0 0 6px ${meta.color}30`,
+                      }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* AI Summary */}
+          {r.ai_summary && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20, borderLeft: "3px solid #d500f9" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#d500f9", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                🤖 AI Analysis & SEO Impact
+              </h4>
+              <div style={{ color: "#c8d6e5", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "'IBM Plex Sans', sans-serif" }}>
+                {r.ai_summary}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

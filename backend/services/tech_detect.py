@@ -152,13 +152,12 @@ def _detect_from_html(html: str, soup, response) -> dict[str, dict]:
     return detected
 
 
-def _format_results(detected: dict[str, dict], url: str) -> str:
-    """Format detected technologies into a readable report."""
-    lines = [f"TECHNOLOGY DETECTION REPORT — {url}", "=" * 60, ""]
+def _structure_results(detected: dict[str, dict], url: str) -> dict:
+    """Structure detected technologies into categorized JSON."""
 
-    categories = {
-        "CMS / Framework": ["WordPress", "Shopify", "Wix", "Squarespace", "Drupal", "Joomla"],
-        "JavaScript Framework": ["React", "Next.js", "Vue.js", "Nuxt.js", "Angular", "Svelte"],
+    categories_map = {
+        "CMS / Platform": ["WordPress", "Shopify", "Wix", "Squarespace", "Drupal", "Joomla"],
+        "Frontend Framework": ["React", "Next.js", "Vue.js", "Nuxt.js", "Angular", "Svelte"],
         "CSS Framework": ["Bootstrap", "Tailwind CSS", "Material UI"],
         "JavaScript Library": ["jQuery", "GSAP", "Three.js", "Lodash", "D3.js"],
         "Analytics & Tracking": ["Google Analytics", "Google Tag Manager", "Facebook Pixel", "Hotjar", "Mixpanel", "Segment"],
@@ -169,38 +168,58 @@ def _format_results(detected: dict[str, dict], url: str) -> str:
         "Security": ["HTTPS/SSL"],
     }
 
-    for cat_name, tech_names in categories.items():
-        found = [(t, detected[t]) for t in tech_names if t in detected]
-        # Also include server/powered-by in their own section
+    categories = {}
+    for cat_name, tech_names in categories_map.items():
+        found = []
+        for t in tech_names:
+            if t in detected:
+                found.append({"name": t, "confidence": detected[t]["confidence"], "evidence": detected[t]["evidence"]})
+        # Server & Infrastructure entries go into their own category
         if cat_name == "CDN & Performance":
             for key in detected:
                 if key.startswith("Server:") or key.startswith("Powered-By:"):
-                    found.append((key, detected[key]))
-
+                    # Put these into Server & Infrastructure instead
+                    if "Server & Infrastructure" not in categories:
+                        categories["Server & Infrastructure"] = []
+                    categories["Server & Infrastructure"].append(
+                        {"name": key, "confidence": detected[key]["confidence"], "evidence": detected[key]["evidence"]}
+                    )
         if found:
-            lines.append(f"### {cat_name}")
-            for name, info in found:
-                lines.append(f"  • {name}  [Confidence: {info['confidence']}]")
-                lines.append(f"    Evidence: {', '.join(info['evidence'])}")
-            lines.append("")
+            categories[cat_name] = found
 
-    total = len(detected)
-    lines.append(f"TOTAL TECHNOLOGIES DETECTED: {total}")
-    return "\n".join(lines)
+    # Confidence summary
+    conf = {"High": 0, "Medium": 0, "Low": 0}
+    for info in detected.values():
+        conf[info["confidence"]] = conf.get(info["confidence"], 0) + 1
+
+    return {
+        "url": url,
+        "total_detected": len(detected),
+        "categories": categories,
+        "confidence_summary": conf,
+    }
 
 
-async def detect(url: str) -> str:
+async def detect(url: str) -> dict:
     """Main entry point: scrape the page then optionally ask AI for a summary."""
     resp = await asyncio.to_thread(fetch_page, url)
     if resp is None:
-        return f"Error: Could not fetch {url}. Check the URL and try again."
+        return {"error": f"Could not fetch {url}. Check the URL and try again."}
 
     soup = parse_html(resp.text)
     detected = _detect_from_html(resp.text, soup, resp)
-    report_text = _format_results(detected, url)
+    result = _structure_results(detected, url)
 
     # Only call AI if we want a polished summary on top of raw detection
     if len(detected) >= 3:
+        # Build a concise text version for the AI prompt
+        report_lines = []
+        for cat, techs in result["categories"].items():
+            report_lines.append(f"### {cat}")
+            for t in techs:
+                report_lines.append(f"  • {t['name']} [{t['confidence']}] — {', '.join(t['evidence'])}")
+        report_text = "\n".join(report_lines)
+
         try:
             summary = await asyncio.to_thread(
                 ask_ai,
@@ -210,8 +229,8 @@ async def detect(url: str) -> str:
                 f"Here is the detection report:\n\n{report_text}\n\nAdd SEO impact notes and recommendations.",
                 1500,
             )
-            return report_text + "\n\n" + "─" * 60 + "\nAI ANALYSIS & SEO IMPACT\n" + "─" * 60 + "\n\n" + summary
+            result["ai_summary"] = summary
         except Exception:
-            pass  # If AI fails, return raw report
+            pass  # If AI fails, return without summary
 
-    return report_text
+    return result
