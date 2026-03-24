@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState } from "react";
 
-const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-sonnet-4-20250514";
+const API_BASE = "http://localhost:8000";
 
 const TOOLS_CONFIG = [
   { id: "serp", name: "SERP Rank Tracker", icon: "📊", desc: "Find where your URL ranks on Google for specific keywords across multiple pages", color: "#00e5ff" },
@@ -14,13 +13,18 @@ const TOOLS_CONFIG = [
   { id: "report", name: "Report Generator", icon: "📋", desc: "Generate comprehensive audit reports with actionable insights and roadmap", color: "#448aff" },
 ];
 
-async function callClaude(systemPrompt, userMessage, useWebSearch = false) {
-  const body = { model: MODEL, max_tokens: 4000, system: systemPrompt, messages: [{ role: "user", content: userMessage }] };
-  if (useWebSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
-  const res = await fetch(ANTHROPIC_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+async function callBackend(endpoint, body) {
+  const res = await fetch(`${API_BASE}/api/${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`API error ${res.status}: ${errText}`);
+  }
   const data = await res.json();
-  return data.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  return data.result;
 }
 
 function Spinner({ size = 20, color = "#00e5ff" }) {
@@ -51,34 +55,9 @@ function SERPTracker() {
     const validKw = keywords.filter((k) => k.trim());
     if (!url.trim() || validKw.length === 0) return;
     setLoading(true); setResults(null);
-    setProgress("Searching Google for keyword rankings...");
+    setProgress("Analyzing keyword rankings...");
     try {
-      const kwList = validKw.map((k) => `"${k}"`).join(", ");
-      const resp = await callClaude(
-        `You are an SEO SERP rank analysis tool. Search Google for specified keywords and determine where a target URL ranks.
-
-For EACH keyword:
-1. Search Google for that keyword
-2. Look through results (check up to 5 pages / 50 results)
-3. Find if the target URL or domain appears
-4. Report the exact position/rank
-
-Format per keyword:
-KEYWORD: [keyword]
-RANK: [position number or "Not found in top 50"]
-PAGE: [which Google page]
-SNIPPET: [title/snippet if found]
-COMPETING_URLS: [3-5 URLs ranking above target]
----
-
-After all keywords provide:
-SUMMARY:
-- Overall visibility score (0-100)
-- Quick wins
-- Recommendations per keyword`,
-        `Target URL: ${url}\nKeywords to check: ${kwList}\n\nSearch each keyword on Google and report where the target URL ranks. Check multiple pages.`,
-        true
-      );
+      const resp = await callBackend("serp", { url: url.trim(), keywords: validKw });
       setResults(resp);
     } catch (e) { setResults("Error: " + e.message); }
     setLoading(false); setProgress("");
@@ -117,24 +96,7 @@ function TechDetector() {
     if (!url.trim()) return;
     setLoading(true); setResults(null);
     try {
-      const resp = await callClaude(
-        `You are a web technology detection expert. When given a URL, search the web for information about what technologies that website uses. Identify:
-
-1. CMS/Framework: WordPress, Shopify, React, Next.js, Vue, Angular, etc.
-2. Server/Hosting: Nginx, Apache, AWS, Cloudflare, Vercel, Netlify, etc.
-3. JavaScript Libraries: jQuery, Lodash, D3, Three.js, GSAP, etc.
-4. CSS Frameworks: Tailwind, Bootstrap, Material UI, etc.
-5. Analytics & Tracking: Google Analytics, Hotjar, Mixpanel, etc.
-6. CDN & Performance: Cloudflare, Fastly, Akamai, etc.
-7. SEO Tools: Schema markup, Open Graph, meta tags, etc.
-8. Security: SSL, HSTS, CSP headers, etc.
-9. Third-party Services: Payment, chat widgets, email, etc.
-10. Programming Languages: PHP, Python, Node.js, Ruby, etc.
-
-For each provide: Name, Version (if detectable), Category, Confidence (High/Medium/Low), SEO Impact.`,
-        `Detect all technologies used on: ${url}\n\nSearch BuiltWith, Wappalyzer data, and any available information.`,
-        true
-      );
+      const resp = await callBackend("tech", { url: url.trim() });
       setResults(resp);
     } catch (e) { setResults("Error: " + e.message); }
     setLoading(false);
@@ -168,32 +130,7 @@ function UIUXAnalysis() {
     setLoading(true); setResults(null);
     try {
       const pageList = pages.filter((p) => p.trim());
-      const pageStr = pageList.length ? `\nSpecific pages:\n${pageList.map((p) => `- ${p}`).join("\n")}` : "";
-      const resp = await callClaude(
-        `You are an expert UI/UX auditor. Analyze websites for UI/UX issues with detailed, actionable recommendations.
-
-Evaluate:
-1. Visual Hierarchy - content hierarchy, heading structure
-2. Navigation - intuitive, findable
-3. Mobile Responsiveness - layout adaptation
-4. Call-to-Action - clear, visible, compelling
-5. Typography - readable, proper sizes, contrast
-6. Color Scheme - palette, contrast ratios
-7. Loading Experience - states, skeleton screens, lazy loading
-8. Forms & Inputs - user-friendly, validation
-9. Accessibility - WCAG, alt texts, ARIA, keyboard nav
-10. Whitespace & Layout - balanced, spacing
-11. Consistency - design patterns across pages
-12. Error Handling - error display, 404 pages
-13. Microinteractions - hover states, transitions
-14. Content Readability - scannable, structured
-15. Trust Signals - testimonials, badges, security
-
-Per issue: Severity (🔴 Critical / 🟡 Warning / 🟢 Minor), impact, fix recommendation, priority (1-10).
-End with overall UI/UX score /100 and prioritized action plan.`,
-        `Analyze UI/UX of: ${url}${pageStr}\n\nSearch the web to view and analyze the design thoroughly.`,
-        true
-      );
+      const resp = await callBackend("uiux", { url: url.trim(), pages: pageList });
       setResults(resp);
     } catch (e) { setResults("Error: " + e.message); }
     setLoading(false);
@@ -234,38 +171,7 @@ function FullAudit() {
     const iv = setInterval(() => { si = (si + 1) % stages.length; setStage(stages[si]); }, 3000);
     try {
       setStage(stages[0]);
-      const resp = await callClaude(
-        `You are a comprehensive SEO audit tool. Perform a FULL SEO audit. Search the web to gather all available information.
-
-## AUDIT SECTIONS:
-
-### 1. TECHNICAL SEO (Score: /100)
-Crawlability, indexation, robots.txt, sitemap.xml, URL structure, HTTPS/SSL, page speed, mobile-friendliness, canonical tags, hreflang, structured data, Core Web Vitals
-
-### 2. ON-PAGE SEO (Score: /100)
-Title tags, meta descriptions, heading hierarchy (H1-H6), image optimization (alt tags, sizes), internal linking, keyword optimization, content length/quality, URL optimization
-
-### 3. CONTENT ANALYSIS (Score: /100)
-Content quality/uniqueness, keyword density/relevance, readability score, content freshness, thin/duplicate content, content gaps vs competitors
-
-### 4. OFF-PAGE SEO (Score: /100)
-Backlink profile, domain authority estimate, social media presence, brand mentions, local SEO signals
-
-### 5. USER EXPERIENCE (Score: /100)
-Navigation, mobile responsiveness, page load, accessibility, CTA effectiveness
-
-### 6. COMPETITIVE ANALYSIS
-Top 3-5 competitors, strengths/weaknesses, keyword/content gaps
-
-Start with OVERALL SEO SCORE (0-100).
-End with PRIORITIZED ACTION PLAN:
-- Quick Wins (this week)
-- Short-term (this month)
-- Long-term (this quarter)
-Each with expected impact (High/Medium/Low).`,
-        `Complete SEO audit of: ${url}\n\nSearch thoroughly for all info about this site, competitors, and online presence.`,
-        true
-      );
+      const resp = await callBackend("audit", { url: url.trim() });
       setResults(resp);
     } catch (e) { setResults("Error: " + e.message); }
     clearInterval(iv); setLoading(false); setStage("");
@@ -294,28 +200,7 @@ function PerformanceCheck() {
     if (!url.trim()) return;
     setLoading(true); setResults(null);
     try {
-      const resp = await callClaude(
-        `You are a web performance expert. Analyze website performance searching for available data and PageSpeed Insights.
-
-### CORE WEB VITALS
-- LCP (target < 2.5s), INP (target < 200ms), CLS (target < 0.1)
-
-### PERFORMANCE METRICS
-FCP, TTFB, Speed Index, TBT, TTI
-
-### OPTIMIZATION ANALYSIS
-Image optimization, JS bundles, CSS, font loading, caching, compression, CDN, render-blocking resources, lazy loading, preloading
-
-### MOBILE PERFORMANCE
-Mobile metrics, responsive design, touch targets, viewport config
-
-### SCORES (0-100)
-Performance, Accessibility, Best Practices, SEO
-
-Provide specific, actionable recommendations sorted by impact.`,
-        `Analyze performance of: ${url}\n\nSearch for PageSpeed Insights data, GTmetrix, and available performance info.`,
-        true
-      );
+      const resp = await callBackend("performance", { url: url.trim() });
       setResults(resp);
     } catch (e) { setResults("Error: " + e.message); }
     setLoading(false);
@@ -345,32 +230,7 @@ function SiteCrawler() {
     if (!url.trim()) return;
     setLoading(true); setResults(null);
     try {
-      const resp = await callClaude(
-        `You are a website crawler and site structure analyst. Analyze the website's structure by searching for sitemap, pages, and architecture.
-
-### SITE STRUCTURE
-Total estimated pages, hierarchy/depth, navigation structure, URL patterns
-
-### PAGE INVENTORY
-Key pages: URL, type, HTTP status, title tag, estimated word count
-
-### LINK ANALYSIS
-Internal links, orphan pages, link depth, broken links
-
-### SITEMAP ANALYSIS
-XML sitemap presence/validity, pages vs actual, last modified, priorities
-
-### ROBOTS.TXT ANALYSIS
-Allowed/disallowed paths, crawl directives, sitemap refs
-
-### ARCHITECTURE ISSUES
-Pages too deep (3+ clicks), redirect chains, duplicate content, missing canonicals, pagination
-
-### RECOMMENDATIONS
-Prioritized improvements with expected SEO impact.`,
-        `Crawl and analyze: ${url}\nDepth: ${depth} levels\n\nSearch for sitemap, robots.txt, and all discoverable pages.`,
-        true
-      );
+      const resp = await callBackend("crawl", { url: url.trim(), depth: parseInt(depth) });
       setResults(resp);
     } catch (e) { setResults("Error: " + e.message); }
     setLoading(false);
@@ -409,32 +269,7 @@ function ContentAnalysis() {
     if (!url.trim()) return;
     setLoading(true); setResults(null);
     try {
-      const kwNote = targetKw.trim() ? `\nTarget keywords: ${targetKw}` : "";
-      const resp = await callClaude(
-        `You are a content analysis and SEO copywriting expert. Analyze website content for SEO effectiveness.
-
-### CONTENT QUALITY (Score: /100)
-Originality, depth, accuracy (E-E-A-T), writing quality, value
-
-### KEYWORD ANALYSIS
-Primary keyword, density, LSI keywords, placement, missing opportunities, cannibalization
-
-### READABILITY
-Flesch Reading Ease, sentence/paragraph length, subheadings, lists, active/passive ratio
-
-### CONTENT STRUCTURE
-Heading hierarchy, length vs competitors, TOC, FAQ sections, linking
-
-### CONTENT GAP ANALYSIS
-Missing topics vs competitors, unanswered audience questions, update frequency, seasonal opportunities
-
-### FEATURED SNIPPET OPPORTUNITIES
-Questions, lists, tables, how-to formats
-
-Provide rewrite suggestions and new content ideas with estimated search volume.`,
-        `Analyze content of: ${url}${kwNote}\n\nExamine actual content, compare with competitors, identify optimization opportunities.`,
-        true
-      );
+      const resp = await callBackend("content", { url: url.trim(), target_keywords: targetKw.trim() });
       setResults(resp);
     } catch (e) { setResults("Error: " + e.message); }
     setLoading(false);
@@ -469,34 +304,8 @@ function ReportGenerator() {
   const generate = async () => {
     if (!url.trim()) return;
     setLoading(true); setResults(null);
-    const sel = Object.entries(sections).filter(([, v]) => v).map(([k]) => k);
     try {
-      const resp = await callClaude(
-        `You are an SEO report generator. Create a professional, comprehensive SEO audit report.
-
-# SEO AUDIT REPORT
-
-## Executive Summary
-Overview, overall health score, top 3 priorities.
-
-## Sections (include only requested):
-${sel.includes("technical") ? "### Technical SEO - Crawlability, indexation, speed, mobile, security with severity ratings and fixes" : ""}
-${sel.includes("onpage") ? "### On-Page SEO - Meta tags, headings, images, links, keywords with page-by-page assessment" : ""}
-${sel.includes("content") ? "### Content Analysis - Quality, gaps, opportunities, competitor comparison, content calendar" : ""}
-${sel.includes("performance") ? "### Performance & Core Web Vitals - Speed metrics, optimization, CDN, caching" : ""}
-${sel.includes("uiux") ? "### User Experience - Navigation, accessibility, conversion, mobile, design" : ""}
-${sel.includes("competitive") ? "### Competitive Analysis - Competitors, comparison, opportunity gaps" : ""}
-
-## Priority Action Plan
-🔴 Critical (Immediately) | 🟡 Important (This Month) | 🟢 Recommended (This Quarter) | 🔵 Nice to Have
-
-## Expected Impact Timeline
-## KPIs to Track
-
-Make it detailed, professional, and actionable.`,
-        `Generate SEO audit report for: ${url}\nSections: ${sel.join(", ")}\n\nSearch thoroughly for all available information.`,
-        true
-      );
+      const resp = await callBackend("report", { url: url.trim(), sections });
       setResults(resp);
     } catch (e) { setResults("Error: " + e.message); }
     setLoading(false);
@@ -579,8 +388,8 @@ function Dashboard({ onSelectTool }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, padding: "24px 0", borderTop: "1px solid #1a2d42" }}>
         {[
-          { icon: "🤖", title: "AI-Powered Analysis", desc: "Uses Claude AI to provide intelligent insights, not just raw data" },
-          { icon: "🌐", title: "Live Web Search", desc: "Searches the web in real-time for the most current information" },
+          { icon: "🤖", title: "AI-Powered Analysis", desc: "Uses Azure OpenAI to provide intelligent insights, not just raw data" },
+          { icon: "🔧", title: "Programmatic Scanning", desc: "Real HTML scraping, PageSpeed Insights, and BFS crawling for accurate data" },
           { icon: "📊", title: "Comprehensive Reports", desc: "Detailed, actionable reports covering every aspect of your site" },
         ].map((f) => (
           <div key={f.title} style={{ textAlign: "center", padding: 16 }}>
@@ -636,7 +445,7 @@ export default function SEOAuditTool() {
           ))}
         </div>
 
-        {sidebarOpen && <div style={{ padding: "12px 16px", borderTop: "1px solid #1a2d42", textAlign: "center" }}><span style={{ fontSize: 10, color: "#3a5a7a" }}>Powered by Claude AI</span></div>}
+        {sidebarOpen && <div style={{ padding: "12px 16px", borderTop: "1px solid #1a2d42", textAlign: "center" }}><span style={{ fontSize: 10, color: "#3a5a7a" }}>Powered by Azure OpenAI</span></div>}
       </div>
 
       <div style={{ flex: 1, padding: "24px 32px", overflowY: "auto", maxWidth: 960 }}>

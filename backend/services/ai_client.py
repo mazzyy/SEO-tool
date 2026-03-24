@@ -22,7 +22,7 @@ def ask_ai(system_prompt: str, user_message: str, max_tokens: int = 4000) -> str
     client = _get_client()
     response = client.chat.completions.create(
         model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-        max_tokens=max_tokens,
+        max_completion_tokens=max_tokens,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
