@@ -4,23 +4,39 @@ import asyncio
 import httpx
 from .ai_client import ask_ai
 
+import os
+
 PAGESPEED_API = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
 
 
-async def _fetch_pagespeed(url: str, strategy: str = "mobile") -> dict | None:
-    """Call Google PageSpeed Insights API (free, no key required for basic use)."""
+async def _fetch_pagespeed(url: str, strategy: str = "mobile") -> tuple[dict | None, str | None]:
+    """Call Google PageSpeed Insights API with optional API key."""
+    api_key = os.getenv("GOOGLE_API_KEY")
+    params = {
+        "url": url,
+        "strategy": strategy,
+        "category": ["performance", "accessibility", "best-practices", "seo"],
+    }
+    if api_key:
+        params["key"] = api_key
+
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.get(PAGESPEED_API, params={
-                "url": url,
-                "strategy": strategy,
-                "category": ["performance", "accessibility", "best-practices", "seo"],
-            })
+            resp = await client.get(PAGESPEED_API, params=params)
+            
             if resp.status_code == 200:
-                return resp.json()
-    except Exception:
-        pass
-    return None
+                return resp.json(), None
+            elif resp.status_code == 429:
+                return None, "Rate limit exceeded (429). Please add a GOOGLE_API_KEY to your backend/.env file to increase your quota."
+            elif resp.status_code == 400:
+                return None, f"Bad request (400). Google could not fetch the URL: {resp.text[:100]}"
+            elif resp.status_code == 500:
+                return None, "Google PageSpeed API internal server error (500)."
+            else:
+                return None, f"HTTP Error {resp.status_code} from PageSpeed API."
+    except Exception as e:
+        return None, f"Connection error: {str(e)}"
+    return None, "Unknown error."
 
 
 def _extract_metrics(data: dict) -> dict:
@@ -138,24 +154,31 @@ Keep recommendations specific and actionable. Reference the actual scores and me
 
 async def check(url: str) -> str:
     # Fetch both mobile and desktop data in parallel
-    mobile_raw, desktop_raw = await asyncio.gather(
+    mobile_result, desktop_result = await asyncio.gather(
         _fetch_pagespeed(url, "mobile"),
         _fetch_pagespeed(url, "desktop"),
     )
 
-    mobile_metrics = _extract_metrics(mobile_raw) if mobile_raw else None
-    desktop_metrics = _extract_metrics(desktop_raw) if desktop_raw else None
+    mobile_data, mobile_err = mobile_result
+    desktop_data, desktop_err = desktop_result
 
+    mobile_metrics = _extract_metrics(mobile_data) if mobile_data else None
+    desktop_metrics = _extract_metrics(desktop_data) if desktop_data else None
+
+    # If both failed, return a single descriptive error
     if mobile_metrics is None and desktop_metrics is None:
+        err_msg = mobile_err or desktop_err or "Unknown error."
         return (
             f"Could not fetch performance data for {url}.\n\n"
+            f"Error details: {err_msg}\n\n"
             "This can happen if:\n"
             "- The URL is not publicly accessible\n"
-            "- Google's PageSpeed API is temporarily unavailable\n"
+            "- Google's PageSpeed API is temporarily unavailable or hit a rate limit\n"
             "- The page takes too long to load\n\n"
-            "Please verify the URL and try again."
+            "Please verify the URL and your API keys, then try again."
         )
 
+    # We might have partial data (e.g., mobile succeeded but desktop failed), which we handle here.
     report = _format_metrics(url, mobile_metrics, desktop_metrics)
 
     # AI only for recommendations summary
