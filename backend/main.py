@@ -24,7 +24,7 @@ app.add_middleware(
 class SERPRequest(BaseModel):
     url: str
     keywords: list[str]
-    max_pages: int = 5
+    max_pages: int = 10
 
 class URLRequest(BaseModel):
     url: str

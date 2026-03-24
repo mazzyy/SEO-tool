@@ -4,6 +4,11 @@ SERP Rank Tracker — services/serp.py
 2-Tier real Google ranking system:
   Tier 1: Serper.dev API  (free 2,500 queries — add SERPER_API_KEY to .env)
   Tier 2: Direct Google scraping with httpx + BeautifulSoup
+
+Returns structured JSON for the frontend dashboard with:
+  - Full competitor list (all results, not just top 5)
+  - Deep page analysis for top competitors (word count, headings, meta, content structure)
+  - AI-powered strategic insights
 """
 
 import os
@@ -90,10 +95,11 @@ def _ensure_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 # Tier 1: Serper.dev API
 # ---------------------------------------------------------------------------
-async def _serper_search(keyword: str, num_pages: int = 5) -> Optional[list[dict]]:
+async def _serper_search(keyword: str, num_pages: int = 10, target_url: str = "") -> Optional[list[dict]]:
     """
     Query Serper.dev API, paginating through `num_pages` Google result pages.
-    Each page = 10 results = 1 API credit.
+    If target_url is provided, stops searching once the target is found
+    (but always completes the current page to get full results for that page).
     """
     api_key = os.getenv("SERPER_API_KEY")
     if not api_key:
@@ -101,6 +107,7 @@ async def _serper_search(keyword: str, num_pages: int = 5) -> Optional[list[dict
 
     all_results = []
     position = 1
+    target_found = False
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -115,24 +122,33 @@ async def _serper_search(keyword: str, num_pages: int = 5) -> Optional[list[dict
 
                 organic = data.get("organic", [])
                 if not organic:
-                    break  # No more results
+                    break
 
                 for item in organic:
+                    link = item.get("link", "")
                     all_results.append({
                         "position": item.get("position", position),
                         "title": item.get("title", ""),
-                        "link": item.get("link", ""),
+                        "link": link,
                         "snippet": item.get("snippet", ""),
                     })
                     position += 1
 
+                    # Check if we found the target URL
+                    if target_url and _domain_match(link, target_url):
+                        target_found = True
+
                 logger.info(f"[Serper] Page {page_num}: {len(organic)} results for '{keyword}'")
 
-                # Small delay between pages to be polite
+                # Stop early if target was found on this page
+                if target_found:
+                    logger.info(f"[Serper] Target found on page {page_num}, stopping search early (saved {num_pages - page_num} API calls)")
+                    break
+
                 if page_num < num_pages:
                     await asyncio.sleep(0.3)
 
-        logger.info(f"[Serper] Total: {len(all_results)} results across {num_pages} pages for '{keyword}'")
+        logger.info(f"[Serper] Total: {len(all_results)} results across {page_num if all_results else 0} pages for '{keyword}'")
         return all_results if all_results else None
 
     except Exception as e:
@@ -166,7 +182,7 @@ def _is_captcha(html: str) -> bool:
     return any(s in html_lower for s in signals)
 
 
-async def _google_scrape(keyword: str, num_pages: int = 5) -> Optional[list[dict]]:
+async def _google_scrape(keyword: str, num_pages: int = 10) -> Optional[list[dict]]:
     all_results = []
     position = 1
 
@@ -264,16 +280,169 @@ async def _google_scrape(keyword: str, num_pages: int = 5) -> Optional[list[dict
 
 
 # ---------------------------------------------------------------------------
-# Main: analyze(url, keywords, max_pages) -> str
+# Deep competitor page analysis
 # ---------------------------------------------------------------------------
-async def analyze(url: str, keywords: list[str], max_pages: int = 5) -> str:
+async def _analyze_competitor_page(url: str) -> dict:
+    """
+    Fetch a competitor page and extract SEO-relevant signals:
+    word count, headings structure, meta tags, content type, schema markup, etc.
+    """
+    result = {
+        "url": url,
+        "domain": urlparse(url).netloc.replace("www.", ""),
+        "analyzed": False,
+        "word_count": 0,
+        "headings": {"h1": [], "h2": [], "h3": []},
+        "meta_title": "",
+        "meta_description": "",
+        "meta_keywords": "",
+        "has_schema_markup": False,
+        "schema_types": [],
+        "internal_links": 0,
+        "external_links": 0,
+        "images": 0,
+        "images_without_alt": 0,
+        "has_canonical": False,
+        "canonical_url": "",
+        "content_type": "unknown",
+        "has_og_tags": False,
+        "has_twitter_cards": False,
+        "page_title_length": 0,
+        "meta_desc_length": 0,
+        "error": None,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+            resp = await client.get(url, headers=_random_headers())
+            if resp.status_code != 200:
+                result["error"] = f"HTTP {resp.status_code}"
+                return result
+
+            html = resp.text
+            soup = BeautifulSoup(html, "lxml")
+            result["analyzed"] = True
+
+            # --- Word count ---
+            body = soup.find("body")
+            if body:
+                # Remove script/style tags
+                for tag in body.find_all(["script", "style", "nav", "footer", "header"]):
+                    tag.decompose()
+                text = body.get_text(" ", strip=True)
+                words = text.split()
+                result["word_count"] = len(words)
+
+            # --- Headings ---
+            for level in ["h1", "h2", "h3"]:
+                tags = soup.find_all(level)
+                result["headings"][level] = [t.get_text(strip=True)[:120] for t in tags[:10]]
+
+            # --- Meta tags ---
+            title_tag = soup.find("title")
+            if title_tag:
+                result["meta_title"] = title_tag.get_text(strip=True)[:200]
+                result["page_title_length"] = len(result["meta_title"])
+
+            meta_desc = soup.find("meta", attrs={"name": re.compile(r"description", re.I)})
+            if meta_desc:
+                result["meta_description"] = (meta_desc.get("content", "") or "")[:300]
+                result["meta_desc_length"] = len(result["meta_description"])
+
+            meta_kw = soup.find("meta", attrs={"name": re.compile(r"keywords", re.I)})
+            if meta_kw:
+                result["meta_keywords"] = (meta_kw.get("content", "") or "")[:300]
+
+            # --- Canonical ---
+            canonical = soup.find("link", attrs={"rel": "canonical"})
+            if canonical:
+                result["has_canonical"] = True
+                result["canonical_url"] = (canonical.get("href", "") or "")[:200]
+
+            # --- Open Graph / Twitter Cards ---
+            if soup.find("meta", attrs={"property": re.compile(r"^og:", re.I)}):
+                result["has_og_tags"] = True
+            if soup.find("meta", attrs={"name": re.compile(r"^twitter:", re.I)}):
+                result["has_twitter_cards"] = True
+
+            # --- Schema Markup ---
+            schema_scripts = soup.find_all("script", attrs={"type": "application/ld+json"})
+            if schema_scripts:
+                result["has_schema_markup"] = True
+                for script in schema_scripts[:5]:
+                    try:
+                        import json
+                        data = json.loads(script.string or "")
+                        if isinstance(data, dict) and "@type" in data:
+                            result["schema_types"].append(data["@type"])
+                        elif isinstance(data, list):
+                            for item in data[:3]:
+                                if isinstance(item, dict) and "@type" in item:
+                                    result["schema_types"].append(item["@type"])
+                    except Exception:
+                        pass
+
+            # --- Links ---
+            domain = urlparse(url).netloc
+            all_links = soup.find_all("a", href=True)
+            for a in all_links:
+                href = a.get("href", "")
+                if href.startswith(("http://", "https://")):
+                    link_domain = urlparse(href).netloc
+                    if link_domain == domain or link_domain == f"www.{domain}":
+                        result["internal_links"] += 1
+                    else:
+                        result["external_links"] += 1
+                elif href.startswith("/"):
+                    result["internal_links"] += 1
+
+            # --- Images ---
+            images = soup.find_all("img")
+            result["images"] = len(images)
+            result["images_without_alt"] = sum(1 for img in images if not img.get("alt"))
+
+            # --- Content type detection ---
+            if result["word_count"] > 2000:
+                result["content_type"] = "long-form article"
+            elif result["word_count"] > 800:
+                result["content_type"] = "standard article"
+            elif result["word_count"] > 300:
+                result["content_type"] = "short content/landing page"
+            else:
+                result["content_type"] = "thin content/tool page"
+
+            if soup.find("table"):
+                result["content_type"] += " + data tables"
+            if soup.find(["ul", "ol"], class_=re.compile(r"faq|question|accordion", re.I)) or \
+               soup.find(attrs={"class": re.compile(r"faq|question|accordion", re.I)}):
+                result["content_type"] += " + FAQ"
+
+    except Exception as e:
+        result["error"] = str(e)[:200]
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main: analyze(url, keywords, max_pages) -> dict (structured JSON)
+# ---------------------------------------------------------------------------
+async def analyze(url: str, keywords: list[str], max_pages: int = 10) -> dict:
     url = _ensure_url(url)
     keywords = [k.strip() for k in keywords if k.strip()]
 
     if not keywords:
-        return "❌ No keywords provided."
+        return {
+            "visibility_score": 0,
+            "keywords": [],
+            "all_results": [],
+            "competitor_analysis": [],
+            "quick_wins": ["Add target keywords to track"],
+            "summary": "No keywords provided.",
+            "data_source": "none",
+        }
 
-    keyword_results = []
+    keyword_data = []
+    all_serp_results = {}  # keyword -> full list of results
     data_source = "unknown"
 
     for i, keyword in enumerate(keywords):
@@ -294,62 +463,73 @@ async def analyze(url: str, keywords: list[str], max_pages: int = 5) -> str:
                 source = "google_scrape"
 
         if not search_results:
-            keyword_results.append({
+            keyword_data.append({
                 "keyword": keyword,
                 "found": False,
-                "position": None,
+                "rank": -1,
                 "page": None,
-                "url_matched": None,
+                "snippet": "",
                 "total_scanned": 0,
-                "top_competitors": [],
+                "competing_urls": [],
+                "all_competitors": [],
                 "source": "none",
                 "captcha": True,
             })
             continue
 
         data_source = source
+        all_serp_results[keyword] = search_results
 
         # Find target in results
         found_pos = None
         matched_url = None
+        matched_snippet = ""
         for r in search_results:
             if _domain_match(r["link"], url):
                 found_pos = r["position"]
                 matched_url = r["link"]
+                matched_snippet = r.get("snippet", "")
                 break
 
-        # Top competitors
-        competitors = []
-        for r in search_results[:10]:
+        # ALL competitors (not just top 5)
+        all_competitors = []
+        competing_urls = []
+        for r in search_results:
             if not _domain_match(r["link"], url):
-                competitors.append({
+                comp_entry = {
                     "position": r["position"],
                     "title": r["title"],
                     "url": r["link"],
+                    "domain": urlparse(r["link"]).netloc.replace("www.", ""),
                     "snippet": r["snippet"],
-                })
+                    "page": ((r["position"] - 1) // 10) + 1,
+                }
+                all_competitors.append(comp_entry)
+                competing_urls.append(r["link"])
 
-        keyword_results.append({
+        keyword_data.append({
             "keyword": keyword,
             "found": found_pos is not None,
-            "position": found_pos,
+            "rank": found_pos if found_pos else -1,
             "page": ((found_pos - 1) // 10) + 1 if found_pos else None,
+            "snippet": matched_snippet,
             "url_matched": matched_url,
             "total_scanned": len(search_results),
-            "top_competitors": competitors[:5],
+            "competing_urls": competing_urls[:10],  # top 10 URLs for the card
+            "all_competitors": all_competitors,  # ALL competitors with full details
             "source": source,
             "captcha": False,
         })
 
     # ── Visibility Score ──
-    total_kw = len(keyword_results)
+    total_kw = len(keyword_data)
     if total_kw == 0:
         visibility = 0
     else:
         score = 0
-        for r in keyword_results:
-            if r["found"] and r["position"]:
-                pos = r["position"]
+        for r in keyword_data:
+            if r["found"] and r["rank"] and r["rank"] > 0:
+                pos = r["rank"]
                 if pos == 1:
                     score += 100
                 elif pos <= 3:
@@ -364,80 +544,89 @@ async def analyze(url: str, keywords: list[str], max_pages: int = 5) -> str:
                     score += 5
         visibility = round(score / total_kw, 1)
 
-    # ── Format Report ──
-    lines = []
-    lines.append(f"🎯 Target: {url}")
-    lines.append(f"📊 Visibility Score: {visibility}/100")
-    lines.append(f"🔑 Keywords Ranking: {sum(1 for r in keyword_results if r['found'])}/{total_kw}")
-    lines.append(f"📡 Data Source: {data_source}")
-    lines.append("")
-    lines.append("=" * 60)
+    # ── Deep competitor analysis (top 5 unique domains across all keywords) ──
+    seen_domains = set()
+    top_competitor_urls = []
+    for kd in keyword_data:
+        for comp in kd.get("all_competitors", []):
+            domain = comp["domain"]
+            if domain not in seen_domains and len(top_competitor_urls) < 5:
+                seen_domains.add(domain)
+                top_competitor_urls.append(comp["url"])
 
-    for kr in keyword_results:
-        kw = kr["keyword"]
-        lines.append("")
-        lines.append(f"🔎 Keyword: \"{kw}\"")
+    # Fetch and analyze top competitor pages concurrently
+    competitor_analysis = []
+    if top_competitor_urls:
+        tasks = [_analyze_competitor_page(comp_url) for comp_url in top_competitor_urls]
+        competitor_analysis = await asyncio.gather(*tasks, return_exceptions=False)
+        competitor_analysis = [
+            ca if isinstance(ca, dict) else {"url": top_competitor_urls[i], "analyzed": False, "error": str(ca)}
+            for i, ca in enumerate(competitor_analysis)
+        ]
 
-        if kr["captcha"]:
-            lines.append("   ⚠️  Could not fetch Google results.")
-            lines.append("   💡 Add SERPER_API_KEY to .env for reliable results (free 2,500 queries at serper.dev)")
-            continue
-
-        if kr["found"]:
-            pos = kr["position"]
-            page = kr["page"]
-            matched = kr["url_matched"]
-            emoji = "🥇" if pos == 1 else "🥈" if pos == 2 else "🥉" if pos == 3 else "📍"
-            lines.append(f"   {emoji} Position #{pos} (Page {page})")
-            lines.append(f"   🔗 Matched: {matched}")
-        else:
-            scanned = kr["total_scanned"]
-            lines.append(f"   ❌ Not found in top {scanned} results")
-
-        if kr["top_competitors"]:
-            lines.append("   👥 Top Competitors:")
-            for comp in kr["top_competitors"][:3]:
-                lines.append(f"      #{comp['position']} {comp['url']}")
-                if comp["title"]:
-                    lines.append(f"         {comp['title']}")
-
-    lines.append("")
-    lines.append("=" * 60)
-    lines.append("")
-    lines.append("💡 Quick Insights:")
-
-    for kr in keyword_results:
-        if kr["captcha"]:
+    # ── Generate Quick Wins ──
+    quick_wins = []
+    for kr in keyword_data:
+        if kr.get("captcha"):
             continue
         kw = kr["keyword"]
         if kr["found"]:
-            pos = kr["position"]
+            pos = kr["rank"]
             if pos == 1:
-                lines.append(f"   ✅ \"{kw}\": #1 — Maintain with fresh content & backlinks")
+                quick_wins.append(f'"{kw}" is #1 — Maintain with fresh content updates and backlink building')
             elif pos <= 3:
-                lines.append(f"   🔥 \"{kw}\": #{pos} — Close to #1! Optimize title/meta, add internal links")
+                quick_wins.append(f'"{kw}" is #{pos} — Close to #1! Optimize title tag, add internal links, and improve content depth')
             elif pos <= 10:
-                lines.append(f"   📈 \"{kw}\": #{pos} — Page 1. Improve content depth & earn backlinks")
+                quick_wins.append(f'"{kw}" is #{pos} on Page 1 — Improve content comprehensiveness, earn more backlinks, optimize meta description for CTR')
             elif pos <= 20:
-                lines.append(f"   ⚡ \"{kw}\": #{pos} — Page 2. Quick win — improve on-page SEO to break into page 1")
+                quick_wins.append(f'"{kw}" is #{pos} (Page 2) — Quick win! Strengthen on-page SEO, add FAQ section, build topic authority')
             else:
-                lines.append(f"   🔧 \"{kw}\": #{pos} — Needs significant content & authority building")
+                quick_wins.append(f'"{kw}" is #{pos} — Needs significant content depth improvement and authority building')
         else:
-            lines.append(f"   🚀 \"{kw}\": Not ranking — Create targeted content for this keyword")
+            quick_wins.append(f'"{kw}" — Not ranking. Create a comprehensive, targeted article (2000+ words) optimized for this keyword')
 
-    report = "\n".join(lines)
+    # ── AI Enhancement ──
+    # Build a text summary for AI to analyze
+    text_report = f"Target: {url}\nVisibility: {visibility}/100\n"
+    for kd in keyword_data:
+        text_report += f"\nKeyword: {kd['keyword']}"
+        if kd["found"]:
+            text_report += f" — Rank #{kd['rank']} (Page {kd['page']})"
+        else:
+            text_report += f" — Not found in top {kd['total_scanned']} results"
+        if kd.get("all_competitors"):
+            text_report += "\nTop competitors:\n"
+            for comp in kd["all_competitors"][:5]:
+                text_report += f"  #{comp['position']} {comp['url']} — {comp['title']}\n"
 
-    # ── AI Enhancement (uses shared ai_client) ──
-    ai_insights = await ask_ai(
-        "You are an SEO consultant. Analyze the SERP ranking data and provide:\n"
-        "1) A brief summary of the site's search visibility\n"
-        "2) Top 3-5 prioritized quick wins to improve rankings\n"
-        "Be specific, reference actual positions/keywords. Keep it under 250 words.",
-        report,
+    if competitor_analysis:
+        text_report += "\n\nCompetitor Page Analysis:\n"
+        for ca in competitor_analysis:
+            if ca.get("analyzed"):
+                text_report += f"\n{ca['domain']}:"
+                text_report += f"\n  Word count: {ca['word_count']}"
+                text_report += f"\n  Content type: {ca['content_type']}"
+                text_report += f"\n  H1: {', '.join(ca['headings']['h1'][:3])}"
+                text_report += f"\n  Schema: {', '.join(ca['schema_types']) if ca['schema_types'] else 'None'}"
+                text_report += f"\n  Meta title: {ca['meta_title'][:80]}"
+
+    ai_summary = await ask_ai(
+        "You are an expert SEO consultant. Analyze the SERP ranking data and competitor page analysis. Provide:\n"
+        "1) A concise summary of the site's search visibility (2-3 sentences)\n"
+        "2) Top 3-5 specific, actionable recommendations to outrank competitors\n"
+        "3) What the top-ranking pages are doing well that the target site should emulate\n"
+        "Reference actual positions, keywords, competitor content strategies. Keep it under 350 words.\n"
+        "Do NOT use markdown headers or bullet points — write in flowing paragraphs.",
+        text_report,
     )
-    if ai_insights:
-        report += "\n\n" + "=" * 60
-        report += "\n🤖 AI Strategic Insights:\n" + "=" * 60 + "\n"
-        report += ai_insights
 
-    return report
+    return {
+        "visibility_score": visibility,
+        "keywords": keyword_data,
+        "competitor_analysis": [ca for ca in competitor_analysis if isinstance(ca, dict)],
+        "quick_wins": quick_wins,
+        "summary": ai_summary or f"Your site has a visibility score of {visibility}/100. {sum(1 for k in keyword_data if k['found'])}/{total_kw} keywords are ranking.",
+        "data_source": data_source,
+        "total_results_scanned": sum(kd["total_scanned"] for kd in keyword_data),
+        "pages_searched": max_pages,
+    }

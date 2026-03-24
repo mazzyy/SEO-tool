@@ -43,10 +43,12 @@ function ResultBlock({ title, content, color = "#00e5ff" }) {
 function SERPTracker() {
   const [url, setUrl] = useState("");
   const [keywords, setKeywords] = useState([""]);
-  const [maxPages, setMaxPages] = useState(5);
+  const [maxPages, setMaxPages] = useState(10);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
+  const [expandedKeyword, setExpandedKeyword] = useState(null);
+  const [expandedCompetitor, setExpandedCompetitor] = useState(null);
 
   const addKeyword = () => setKeywords([...keywords, ""]);
   const removeKeyword = (i) => setKeywords(keywords.filter((_, idx) => idx !== i));
@@ -56,11 +58,12 @@ function SERPTracker() {
     const validKw = keywords.filter((k) => k.trim());
     if (!url.trim() || validKw.length === 0) return;
     setLoading(true); setResults(null);
-    setProgress("Analyzing keyword rankings...");
+    setExpandedKeyword(null); setExpandedCompetitor(null);
+    setProgress("Searching Google results...");
     try {
       const resp = await callBackend("serp", { url: url.trim(), keywords: validKw, max_pages: maxPages });
-      setResults(typeof resp === "string" ? { keywords: [], visibility_score: 0, quick_wins: [], summary: resp } : resp);
-    } catch (e) { setResults({ keywords: [], visibility_score: 0, quick_wins: [], summary: "Error: " + e.message }); }
+      setResults(typeof resp === "string" ? { keywords: [], visibility_score: 0, quick_wins: [], summary: resp, competitor_analysis: [] } : resp);
+    } catch (e) { setResults({ keywords: [], visibility_score: 0, quick_wins: [], summary: "Error: " + e.message, competitor_analysis: [] }); }
     setLoading(false); setProgress("");
   };
 
@@ -106,6 +109,70 @@ function SERPTracker() {
     );
   };
 
+  // Competitor Deep Analysis Card
+  const CompetitorAnalysisCard = ({ analysis }) => {
+    if (!analysis || !analysis.analyzed) return null;
+    const scoreColor = analysis.word_count >= 2000 ? "#00e676" : analysis.word_count >= 800 ? "#ffd600" : "#ff9100";
+    return (
+      <div style={{ background: "#0a1628", border: "1px solid #1a2d42", borderRadius: 10, padding: 16, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#e8f0fe" }}>{analysis.domain}</span>
+            <a href={analysis.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#00e5ff", marginLeft: 8, textDecoration: "none" }}>Visit</a>
+          </div>
+          <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: `${scoreColor}18`, color: scoreColor, fontWeight: 600 }}>
+            {analysis.word_count.toLocaleString()} words
+          </span>
+        </div>
+
+        {/* Meta Info */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 600, marginBottom: 4 }}>Meta Title ({analysis.page_title_length} chars)</div>
+          <div style={{ fontSize: 12, color: "#c8d6e5", background: "#0d1b2a", padding: 8, borderRadius: 6, lineHeight: 1.4 }}>{analysis.meta_title || "Not set"}</div>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 600, marginBottom: 4 }}>Meta Description ({analysis.meta_desc_length} chars)</div>
+          <div style={{ fontSize: 12, color: "#c8d6e5", background: "#0d1b2a", padding: 8, borderRadius: 6, lineHeight: 1.4 }}>{analysis.meta_description || "Not set"}</div>
+        </div>
+
+        {/* Content Metrics Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
+          {[
+            { label: "Content Type", value: analysis.content_type, color: "#00e5ff" },
+            { label: "Internal Links", value: analysis.internal_links, color: "#76ff03" },
+            { label: "External Links", value: analysis.external_links, color: "#ffd600" },
+            { label: "Images", value: `${analysis.images} (${analysis.images_without_alt} no alt)`, color: analysis.images_without_alt > 0 ? "#ff9100" : "#00e676" },
+            { label: "Schema", value: analysis.has_schema_markup ? analysis.schema_types.join(", ") || "Yes" : "None", color: analysis.has_schema_markup ? "#00e676" : "#ff9100" },
+            { label: "OG / Twitter", value: `${analysis.has_og_tags ? "OG" : "—"} / ${analysis.has_twitter_cards ? "TC" : "—"}`, color: analysis.has_og_tags ? "#00e676" : "#ff9100" },
+          ].map((metric) => (
+            <div key={metric.label} style={{ background: "#0d1b2a", borderRadius: 6, padding: 8, textAlign: "center" }}>
+              <div style={{ fontSize: 9, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>{metric.label}</div>
+              <div style={{ fontSize: 11, color: metric.color, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{metric.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Headings Structure */}
+        {(analysis.headings.h1.length > 0 || analysis.headings.h2.length > 0) && (
+          <div>
+            <div style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 600, marginBottom: 4 }}>Heading Structure</div>
+            <div style={{ background: "#0d1b2a", borderRadius: 6, padding: 8, maxHeight: 140, overflowY: "auto" }}>
+              {analysis.headings.h1.map((h, j) => (
+                <div key={`h1-${j}`} style={{ fontSize: 12, color: "#00e5ff", fontWeight: 600, marginBottom: 3 }}>H1: {h}</div>
+              ))}
+              {analysis.headings.h2.map((h, j) => (
+                <div key={`h2-${j}`} style={{ fontSize: 11, color: "#c8d6e5", marginBottom: 2, paddingLeft: 12 }}>H2: {h}</div>
+              ))}
+              {analysis.headings.h3.map((h, j) => (
+                <div key={`h3-${j}`} style={{ fontSize: 10, color: "#8899aa", marginBottom: 2, paddingLeft: 24 }}>H3: {h}</div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div>
       {/* Inputs */}
@@ -124,9 +191,9 @@ function SERPTracker() {
         <button onClick={addKeyword} style={styles.addBtn}>+ Add Keyword</button>
       </div>
       <div style={{ marginBottom: 20 }}>
-        <label style={styles.label}>Max Google Pages to Search</label>
+        <label style={styles.label}>Google Pages to Search</label>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {[1, 2, 3, 5, 7, 10].map((n) => (
+          {[1, 3, 5, 10, 15, 20].map((n) => (
             <button key={n} onClick={() => setMaxPages(n)}
               style={{
                 padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
@@ -149,12 +216,27 @@ function SERPTracker() {
       {results && (
         <div style={{ marginTop: 28, animation: "fadeUp 0.5s ease" }}>
 
+          {/* Stats Bar */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+            {[
+              { label: "Pages Searched", value: results.pages_searched || maxPages, color: "#00e5ff" },
+              { label: "Results Scanned", value: results.total_results_scanned || 0, color: "#76ff03" },
+              { label: "Data Source", value: results.data_source || "—", color: "#ffd600" },
+              { label: "Keywords Ranking", value: `${(results.keywords || []).filter(k => k.found).length}/${(results.keywords || []).length}`, color: "#d500f9" },
+            ].map((stat) => (
+              <div key={stat.label} style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 8, padding: "10px 16px", flex: "1 1 120px", textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>{stat.label}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: stat.color, fontFamily: "'Sora', sans-serif" }}>{stat.value}</div>
+              </div>
+            ))}
+          </div>
+
           {/* Top Row: Gauge + Summary */}
           <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 24, marginBottom: 24, alignItems: "start" }}>
             <VisibilityGauge score={results.visibility_score || 0} />
             <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20 }}>
-              <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>Analysis Summary</h4>
-              <p style={{ color: "#c8d6e5", fontSize: 13, lineHeight: 1.7, margin: 0 }}>{results.summary || "No summary available."}</p>
+              <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>AI Analysis Summary</h4>
+              <p style={{ color: "#c8d6e5", fontSize: 13, lineHeight: 1.7, margin: 0, whiteSpace: "pre-wrap" }}>{results.summary || "No summary available."}</p>
             </div>
           </div>
 
@@ -205,6 +287,94 @@ function SERPTracker() {
             </div>
           )}
 
+          {/* Full SERP Results Table per Keyword */}
+          {results.keywords && results.keywords.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <h4 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                Full SERP Results ({results.total_results_scanned || 0} results scanned)
+              </h4>
+              {results.keywords.map((kw, kwIdx) => (
+                <div key={kwIdx} style={{ marginBottom: 16 }}>
+                  <button
+                    onClick={() => setExpandedKeyword(expandedKeyword === kwIdx ? null : kwIdx)}
+                    style={{
+                      width: "100%", textAlign: "left", padding: "14px 18px",
+                      background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: expandedKeyword === kwIdx ? "12px 12px 0 0" : 12,
+                      cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center",
+                      borderLeft: `3px solid ${getRankColor(kw.rank, kw.found)}`,
+                    }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#e8f0fe" }}>{kw.keyword}</span>
+                      <span style={{
+                        fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 6,
+                        background: `${getRankColor(kw.rank, kw.found)}18`,
+                        color: getRankColor(kw.rank, kw.found),
+                      }}>{getRankLabel(kw.rank, kw.found)}</span>
+                      <span style={{ fontSize: 11, color: "#5a7a95" }}>
+                        {kw.total_scanned} results scanned  {kw.all_competitors ? `| ${kw.all_competitors.length} competitors` : ""}
+                      </span>
+                    </div>
+                    <span style={{ color: "#5a7a95", fontSize: 16, transform: expandedKeyword === kwIdx ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+                      ▼
+                    </span>
+                  </button>
+
+                  {expandedKeyword === kwIdx && kw.all_competitors && (
+                    <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderTop: "none", borderRadius: "0 0 12px 12px", padding: 0, maxHeight: 500, overflowY: "auto" }}>
+                      {/* Table Header */}
+                      <div style={{ display: "grid", gridTemplateColumns: "50px 1fr 200px 60px", gap: 0, padding: "10px 16px", background: "#0a1628", borderBottom: "1px solid #1a2d42", position: "sticky", top: 0, zIndex: 1 }}>
+                        <span style={{ fontSize: 10, color: "#5a7a95", fontWeight: 700, textTransform: "uppercase" }}>Rank</span>
+                        <span style={{ fontSize: 10, color: "#5a7a95", fontWeight: 700, textTransform: "uppercase" }}>URL & Title</span>
+                        <span style={{ fontSize: 10, color: "#5a7a95", fontWeight: 700, textTransform: "uppercase" }}>Snippet</span>
+                        <span style={{ fontSize: 10, color: "#5a7a95", fontWeight: 700, textTransform: "uppercase" }}>Page</span>
+                      </div>
+                      {/* Rows */}
+                      {kw.all_competitors.map((comp, j) => (
+                        <div key={j} style={{
+                          display: "grid", gridTemplateColumns: "50px 1fr 200px 60px", gap: 0,
+                          padding: "10px 16px", borderBottom: "1px solid #1a2d4230",
+                          background: j % 2 === 0 ? "#0d1b2a" : "#0c1926",
+                          transition: "background 0.15s",
+                        }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = "#0d2847"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = j % 2 === 0 ? "#0d1b2a" : "#0c1926"}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: comp.position <= 3 ? "#00e676" : comp.position <= 10 ? "#76ff03" : comp.position <= 20 ? "#ffd600" : "#8899aa" }}>
+                            #{comp.position}
+                          </span>
+                          <div style={{ overflow: "hidden" }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#e8f0fe", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {comp.title || "Untitled"}
+                            </div>
+                            <a href={comp.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: "#00e5ff", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                              {comp.domain}
+                            </a>
+                          </div>
+                          <div style={{ fontSize: 10, color: "#8899aa", lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                            {comp.snippet || "—"}
+                          </div>
+                          <span style={{ fontSize: 11, color: "#5a7a95", textAlign: "center" }}>P{comp.page}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Deep Competitor Analysis */}
+          {results.competitor_analysis && results.competitor_analysis.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <h4 style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 600, color: "#d500f9", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                Deep Competitor Page Analysis
+              </h4>
+              <p style={{ fontSize: 11, color: "#5a7a95", margin: "0 0 14px" }}>In-depth analysis of top {results.competitor_analysis.length} competitor pages — content structure, meta tags, schema markup, and more</p>
+              {results.competitor_analysis.map((ca, i) => (
+                <CompetitorAnalysisCard key={i} analysis={ca} />
+              ))}
+            </div>
+          )}
+
           {/* Keyword Detail Cards */}
           {results.keywords && results.keywords.length > 0 && (
             <div style={{ marginBottom: 24 }}>
@@ -238,18 +408,23 @@ function SERPTracker() {
                     {/* Page Info */}
                     {kw.found && (
                       <div style={{ fontSize: 11, color: "#5a7a95", marginBottom: 10 }}>
-                        Found on <span style={{ color: "#00e5ff", fontWeight: 600 }}>Google Page {kw.page}</span> (Position {kw.rank})
+                        Found on <span style={{ color: "#00e5ff", fontWeight: 600 }}>Google Page {kw.page}</span> (Position {kw.rank}) out of {kw.total_scanned} results scanned
                       </div>
                     )}
-                    {/* Competitors */}
+                    {!kw.found && kw.total_scanned > 0 && (
+                      <div style={{ fontSize: 11, color: "#ff9100", marginBottom: 10 }}>
+                        Not found in top {kw.total_scanned} results ({Math.floor(kw.total_scanned / 10)} pages)
+                      </div>
+                    )}
+                    {/* Top 10 Competitors */}
                     {kw.competing_urls && kw.competing_urls.length > 0 && (
                       <div>
-                        <span style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 600 }}>Competitors Ranking Higher</span>
+                        <span style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 600 }}>Top 10 Competitors</span>
                         <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
                           {kw.competing_urls.map((cu, j) => (
-                            <span key={j} style={{ fontSize: 11, color: "#8899aa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <a key={j} href={cu} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#8899aa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" }}>
                               {j + 1}. {cu}
-                            </span>
+                            </a>
                           ))}
                         </div>
                       </div>
@@ -263,7 +438,7 @@ function SERPTracker() {
           {/* Quick Wins */}
           {results.quick_wins && results.quick_wins.length > 0 && (
             <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20 }}>
-              <h4 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 600, color: "#76ff03", letterSpacing: 0.5, textTransform: "uppercase" }}>Quick Wins</h4>
+              <h4 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 600, color: "#76ff03", letterSpacing: 0.5, textTransform: "uppercase" }}>Quick Wins & Recommendations</h4>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {results.quick_wins.map((win, i) => (
                   <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 14px", background: "#0a1628", borderRadius: 8, borderLeft: "2px solid #76ff03" }}>
