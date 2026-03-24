@@ -43,6 +43,7 @@ function ResultBlock({ title, content, color = "#00e5ff" }) {
 function SERPTracker() {
   const [url, setUrl] = useState("");
   const [keywords, setKeywords] = useState([""]);
+  const [maxPages, setMaxPages] = useState(5);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
@@ -57,14 +58,57 @@ function SERPTracker() {
     setLoading(true); setResults(null);
     setProgress("Analyzing keyword rankings...");
     try {
-      const resp = await callBackend("serp", { url: url.trim(), keywords: validKw });
-      setResults(resp);
-    } catch (e) { setResults("Error: " + e.message); }
+      const resp = await callBackend("serp", { url: url.trim(), keywords: validKw, max_pages: maxPages });
+      setResults(typeof resp === "string" ? { keywords: [], visibility_score: 0, quick_wins: [], summary: resp } : resp);
+    } catch (e) { setResults({ keywords: [], visibility_score: 0, quick_wins: [], summary: "Error: " + e.message }); }
     setLoading(false); setProgress("");
+  };
+
+  const getRankColor = (rank, found) => {
+    if (!found || rank < 0) return "#5a7a95";
+    if (rank <= 3) return "#00e676";
+    if (rank <= 10) return "#76ff03";
+    if (rank <= 20) return "#ffd600";
+    if (rank <= 30) return "#ff9100";
+    return "#ff1744";
+  };
+
+  const getRankLabel = (rank, found) => {
+    if (!found || rank < 0) return "Not Found";
+    return `#${rank}`;
+  };
+
+  const getBarWidth = (rank, found) => {
+    if (!found || rank < 0) return 0;
+    const max = maxPages * 10;
+    return Math.max(5, 100 - (rank / max) * 100);
+  };
+
+  // SVG Circular Gauge
+  const VisibilityGauge = ({ score }) => {
+    const radius = 54;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference - (score / 100) * circumference;
+    const gaugeColor = score >= 70 ? "#00e676" : score >= 40 ? "#ffd600" : "#ff1744";
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <svg width="140" height="140" viewBox="0 0 140 140">
+          <circle cx="70" cy="70" r={radius} fill="none" stroke="#1a2d42" strokeWidth="10" />
+          <circle cx="70" cy="70" r={radius} fill="none" stroke={gaugeColor} strokeWidth="10"
+            strokeDasharray={circumference} strokeDashoffset={offset}
+            strokeLinecap="round" transform="rotate(-90 70 70)"
+            style={{ transition: "stroke-dashoffset 1s ease, stroke 0.5s ease" }} />
+          <text x="70" y="64" textAnchor="middle" fill="#e8f0fe" fontSize="28" fontWeight="700" fontFamily="'Sora', sans-serif">{score}</text>
+          <text x="70" y="84" textAnchor="middle" fill="#5a7a95" fontSize="11" fontFamily="'IBM Plex Sans', sans-serif">/ 100</text>
+        </svg>
+        <span style={{ fontSize: 11, color: "#5a7a95", marginTop: 4, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" }}>Visibility Score</span>
+      </div>
+    );
   };
 
   return (
     <div>
+      {/* Inputs */}
       <div style={{ marginBottom: 20 }}>
         <label style={styles.label}>Target URL</label>
         <input style={styles.input} placeholder="https://example.com" value={url} onChange={(e) => setUrl(e.target.value)} />
@@ -74,15 +118,164 @@ function SERPTracker() {
         {keywords.map((kw, i) => (
           <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
             <input style={{ ...styles.input, marginBottom: 0, flex: 1 }} placeholder={`Keyword ${i + 1}`} value={kw} onChange={(e) => updateKeyword(i, e.target.value)} onKeyDown={(e) => e.key === "Enter" && addKeyword()} />
-            {keywords.length > 1 && <button onClick={() => removeKeyword(i)} style={styles.removeBtn}>✕</button>}
+            {keywords.length > 1 && <button onClick={() => removeKeyword(i)} style={styles.removeBtn}>x</button>}
           </div>
         ))}
         <button onClick={addKeyword} style={styles.addBtn}>+ Add Keyword</button>
       </div>
+      <div style={{ marginBottom: 20 }}>
+        <label style={styles.label}>Max Google Pages to Search</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {[1, 2, 3, 5, 7, 10].map((n) => (
+            <button key={n} onClick={() => setMaxPages(n)}
+              style={{
+                padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'IBM Plex Sans', sans-serif", transition: "all 0.2s",
+                background: maxPages === n ? "#0d2847" : "#0d1b2a",
+                border: `1px solid ${maxPages === n ? "#00e5ff" : "#1a2d42"}`,
+                color: maxPages === n ? "#00e5ff" : "#5a7a95",
+              }}>
+              {n} {n === 1 ? "page" : "pages"} ({n * 10} results)
+            </button>
+          ))}
+        </div>
+      </div>
+
       <button onClick={runSearch} disabled={loading} style={{ ...styles.primaryBtn, background: loading ? "#1a2d42" : "linear-gradient(135deg, #00e5ff, #0091ea)" }}>
-        {loading ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={16} color="#fff" /> {progress}</span> : "🔎 Track Rankings"}
+        {loading ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={16} color="#fff" /> {progress}</span> : "Track Rankings"}
       </button>
-      {results && <div style={{ marginTop: 24 }}><ResultBlock title="SERP Ranking Results" content={results} color="#00e5ff" /></div>}
+
+      {/* Results Dashboard */}
+      {results && (
+        <div style={{ marginTop: 28, animation: "fadeUp 0.5s ease" }}>
+
+          {/* Top Row: Gauge + Summary */}
+          <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 24, marginBottom: 24, alignItems: "start" }}>
+            <VisibilityGauge score={results.visibility_score || 0} />
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20 }}>
+              <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>Analysis Summary</h4>
+              <p style={{ color: "#c8d6e5", fontSize: 13, lineHeight: 1.7, margin: 0 }}>{results.summary || "No summary available."}</p>
+            </div>
+          </div>
+
+          {/* Ranking Bar Chart */}
+          {results.keywords && results.keywords.length > 0 && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20, marginBottom: 24 }}>
+              <h4 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>Keyword Rank Overview</h4>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {results.keywords.map((kw, i) => (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "140px 50px 1fr", gap: 12, alignItems: "center" }}>
+                    <span style={{ fontSize: 12, color: "#c8d6e5", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{kw.keyword}</span>
+                    <span style={{
+                      fontSize: 13, fontWeight: 700, textAlign: "center", padding: "3px 8px", borderRadius: 6,
+                      background: `${getRankColor(kw.rank, kw.found)}18`,
+                      color: getRankColor(kw.rank, kw.found),
+                    }}>{getRankLabel(kw.rank, kw.found)}</span>
+                    <div style={{ position: "relative", height: 22, background: "#0a1628", borderRadius: 6, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%", borderRadius: 6,
+                        background: `linear-gradient(90deg, ${getRankColor(kw.rank, kw.found)}, ${getRankColor(kw.rank, kw.found)}88)`,
+                        width: `${getBarWidth(kw.rank, kw.found)}%`,
+                        transition: "width 1s ease",
+                        boxShadow: `0 0 8px ${getRankColor(kw.rank, kw.found)}40`,
+                      }} />
+                      {kw.found && kw.rank > 0 && (
+                        <span style={{ position: "absolute", right: 8, top: 3, fontSize: 10, color: "#5a7a95", fontWeight: 500 }}>Page {kw.page}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Legend */}
+              <div style={{ display: "flex", gap: 16, marginTop: 14, flexWrap: "wrap" }}>
+                {[
+                  { color: "#00e676", label: "Top 3" },
+                  { color: "#76ff03", label: "4-10" },
+                  { color: "#ffd600", label: "11-20" },
+                  { color: "#ff9100", label: "21-30" },
+                  { color: "#ff1744", label: "30+" },
+                  { color: "#5a7a95", label: "Not Found" },
+                ].map((l) => (
+                  <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: 3, background: l.color }} />
+                    <span style={{ fontSize: 10, color: "#5a7a95" }}>{l.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Keyword Detail Cards */}
+          {results.keywords && results.keywords.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <h4 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>Keyword Details</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+                {results.keywords.map((kw, i) => (
+                  <div key={i} style={{
+                    background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 16,
+                    borderLeft: `3px solid ${getRankColor(kw.rank, kw.found)}`,
+                    transition: "transform 0.2s, box-shadow 0.2s",
+                  }}
+                    onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 4px 16px ${getRankColor(kw.rank, kw.found)}15`; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "none"; }}>
+                    {/* Card Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#e8f0fe" }}>{kw.keyword}</span>
+                      <span style={{
+                        fontSize: 16, fontWeight: 800, padding: "4px 12px", borderRadius: 8,
+                        background: `${getRankColor(kw.rank, kw.found)}20`,
+                        color: getRankColor(kw.rank, kw.found),
+                        fontFamily: "'Sora', sans-serif",
+                      }}>{getRankLabel(kw.rank, kw.found)}</span>
+                    </div>
+                    {/* Snippet */}
+                    {kw.snippet && (
+                      <div style={{ background: "#0a1628", borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                        <span style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 600 }}>Snippet</span>
+                        <p style={{ color: "#c8d6e5", fontSize: 12, lineHeight: 1.5, margin: "4px 0 0" }}>{kw.snippet}</p>
+                      </div>
+                    )}
+                    {/* Page Info */}
+                    {kw.found && (
+                      <div style={{ fontSize: 11, color: "#5a7a95", marginBottom: 10 }}>
+                        Found on <span style={{ color: "#00e5ff", fontWeight: 600 }}>Google Page {kw.page}</span> (Position {kw.rank})
+                      </div>
+                    )}
+                    {/* Competitors */}
+                    {kw.competing_urls && kw.competing_urls.length > 0 && (
+                      <div>
+                        <span style={{ fontSize: 10, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, fontWeight: 600 }}>Competitors Ranking Higher</span>
+                        <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+                          {kw.competing_urls.map((cu, j) => (
+                            <span key={j} style={{ fontSize: 11, color: "#8899aa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {j + 1}. {cu}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Quick Wins */}
+          {results.quick_wins && results.quick_wins.length > 0 && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20 }}>
+              <h4 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 600, color: "#76ff03", letterSpacing: 0.5, textTransform: "uppercase" }}>Quick Wins</h4>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {results.quick_wins.map((win, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 14px", background: "#0a1628", borderRadius: 8, borderLeft: "2px solid #76ff03" }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#76ff03", flexShrink: 0, fontFamily: "'Sora', sans-serif" }}>{i + 1}.</span>
+                    <span style={{ fontSize: 13, color: "#c8d6e5", lineHeight: 1.5 }}>{win}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

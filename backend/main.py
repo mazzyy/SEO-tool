@@ -24,6 +24,7 @@ app.add_middleware(
 class SERPRequest(BaseModel):
     url: str
     keywords: list[str]
+    max_pages: int = 5
 
 class URLRequest(BaseModel):
     url: str
@@ -49,7 +50,7 @@ class ReportRequest(BaseModel):
 
 @app.post("/api/serp")
 async def serp_endpoint(req: SERPRequest):
-    result = await serp.analyze(req.url, req.keywords)
+    result = await serp.analyze(req.url, req.keywords, req.max_pages)
     return {"result": result}
 
 @app.post("/api/tech")
