@@ -160,8 +160,7 @@ async def check(url: str) -> str:
 
     # AI only for recommendations summary
     try:
-        ai_recs = await asyncio.to_thread(
-            ask_ai,
+        ai_recs = await ask_ai(
             SYSTEM_PROMPT,
             f"Here is the performance report:\n\n{report}\n\n"
             "Provide specific, prioritized recommendations to improve these scores.",

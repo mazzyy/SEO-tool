@@ -579,7 +579,10 @@ function TechDetector() {
             <DonutChart categories={r.categories || {}} />
             {/* Confidence Breakdown */}
             <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: 20 }}>
-              <h4 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>Confidence Breakdown</h4>
+              <h4 style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, color: "#00e5ff", letterSpacing: 0.5, textTransform: "uppercase" }}>Confidence Breakdown</h4>
+              <p style={{ margin: "0 0 14px", fontSize: 11, color: "#5a7a95", lineHeight: 1.5 }}>
+                Based on evidence signals found (script tags, HTTP headers, cookies, inline code). <strong style={{ color: "#00e676" }}>High</strong> = 3+ signals, <strong style={{ color: "#ffd600" }}>Medium</strong> = 2, <strong style={{ color: "#ff9100" }}>Low</strong> = 1.
+              </p>
               {["High", "Medium", "Low"].map((level) => {
                 const count = r.confidence_summary?.[level] || 0;
                 const pct = r.total_detected > 0 ? (count / r.total_detected) * 100 : 0;
@@ -741,6 +744,7 @@ function UIUXAnalysis() {
   const [pages, setPages] = useState([""]);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [expandedIssue, setExpandedIssue] = useState(null);
 
   const addPage = () => setPages([...pages, ""]);
   const updatePage = (i, v) => { const np = [...pages]; np[i] = v; setPages(np); };
@@ -752,8 +756,85 @@ function UIUXAnalysis() {
       const pageList = pages.filter((p) => p.trim());
       const resp = await callBackend("uiux", { url: url.trim(), pages: pageList });
       setResults(resp);
-    } catch (e) { setResults("Error: " + e.message); }
+    } catch (e) { setResults({ error: "Error: " + e.message }); }
     setLoading(false);
+  };
+
+  const r = results && typeof results === "object" && !results.error ? results : null;
+
+  // Radar chart SVG
+  const RadarChart = ({ scores }) => {
+    const cats = [
+      { key: "visual_hierarchy", label: "Visual", color: "#ff6d00" },
+      { key: "navigation", label: "Navigation", color: "#00e5ff" },
+      { key: "mobile_responsiveness", label: "Mobile", color: "#76ff03" },
+      { key: "accessibility", label: "A11y", color: "#d500f9" },
+      { key: "content_readability", label: "Content", color: "#ffd600" },
+      { key: "trust_conversion", label: "Trust", color: "#ff4081" },
+    ];
+    const cx = 120, cy = 120, maxR = 90;
+    const n = cats.length;
+    const angleStep = (2 * Math.PI) / n;
+
+    const getPoint = (i, val) => {
+      const angle = -Math.PI / 2 + i * angleStep;
+      const r = (val / 100) * maxR;
+      return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+    };
+
+    const gridLevels = [25, 50, 75, 100];
+
+    return (
+      <svg viewBox="0 0 240 240" style={{ width: "100%", maxWidth: 260 }}>
+        {/* Grid */}
+        {gridLevels.map((level) => (
+          <polygon key={level} points={cats.map((_, i) => { const p = getPoint(i, level); return `${p.x},${p.y}`; }).join(" ")}
+            fill="none" stroke="#1a2d42" strokeWidth={level === 100 ? 1.5 : 0.8} />
+        ))}
+        {/* Axes */}
+        {cats.map((_, i) => { const p = getPoint(i, 100); return <line key={i} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#1a2d42" strokeWidth={0.5} />; })}
+        {/* Data polygon */}
+        <polygon points={cats.map((c, i) => { const p = getPoint(i, scores[c.key] || 0); return `${p.x},${p.y}`; }).join(" ")}
+          fill="rgba(255, 109, 0, 0.15)" stroke="#ff6d00" strokeWidth={2} />
+        {/* Data points */}
+        {cats.map((c, i) => { const p = getPoint(i, scores[c.key] || 0); return <circle key={i} cx={p.x} cy={p.y} r={4} fill={c.color} stroke="#0a1628" strokeWidth={1.5} />; })}
+        {/* Labels */}
+        {cats.map((c, i) => {
+          const p = getPoint(i, 118);
+          return <text key={i} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fill="#8899aa" fontSize={9} fontWeight={600}>{c.label}</text>;
+        })}
+      </svg>
+    );
+  };
+
+  // Animated score ring
+  const ScoreRing = ({ score, size = 100, color = "#ff6d00" }) => {
+    const r = (size - 12) / 2;
+    const circ = 2 * Math.PI * r;
+    const offset = circ - (score / 100) * circ;
+    return (
+      <svg width={size} height={size}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#1a2d42" strokeWidth={6} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={6}
+          strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: "stroke-dashoffset 1.2s ease" }} />
+        <text x={size / 2} y={size / 2 - 4} textAnchor="middle" fill="#fff" fontSize={size / 3.5} fontWeight={700}>{score}</text>
+        <text x={size / 2} y={size / 2 + 12} textAnchor="middle" fill="#5a7a95" fontSize={8}>/100</text>
+      </svg>
+    );
+  };
+
+  const sevColor = { critical: "#ff1744", warning: "#ff9100", info: "#00e5ff" };
+  const sevIcon = { critical: "🔴", warning: "🟡", info: "🔵" };
+
+  const scoreLabels = {
+    visual_hierarchy: { label: "Visual Hierarchy", icon: "📊", color: "#ff6d00" },
+    navigation: { label: "Navigation", icon: "🧭", color: "#00e5ff" },
+    mobile_responsiveness: { label: "Mobile Ready", icon: "📱", color: "#76ff03" },
+    accessibility: { label: "Accessibility", icon: "♿", color: "#d500f9" },
+    content_readability: { label: "Content", icon: "📖", color: "#ffd600" },
+    trust_conversion: { label: "Trust & CTA", icon: "🎯", color: "#ff4081" },
   };
 
   return (
@@ -772,7 +853,138 @@ function UIUXAnalysis() {
       <button onClick={analyze} disabled={loading} style={{ ...styles.primaryBtn, background: loading ? "#1a2d42" : "linear-gradient(135deg, #ff6d00, #ff9100)" }}>
         {loading ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={16} color="#fff" /> Analyzing UI/UX...</span> : "🎨 Analyze UI/UX"}
       </button>
-      {results && <div style={{ marginTop: 24 }}><ResultBlock title="UI/UX Audit Results" content={results} color="#ff6d00" /></div>}
+
+      {results && typeof results === "string" && <div style={{ marginTop: 24 }}><ResultBlock title="Error" content={results} color="#ff1744" /></div>}
+      {results && results.error && <div style={{ marginTop: 24 }}><ResultBlock title="Error" content={results.error} color="#ff1744" /></div>}
+
+      {r && (
+        <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 20 }}>
+
+          {/* Header with overall score + radar */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: 20, alignItems: "center" }}>
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 24, textAlign: "center" }}>
+              <div style={{ marginBottom: 8 }}>
+                <ScoreRing score={r.scores?.overall || 0} size={130} color={r.scores?.overall >= 70 ? "#00e676" : r.scores?.overall >= 40 ? "#ffd600" : "#ff1744"} />
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 4 }}>Overall UX Score</div>
+              <div style={{ fontSize: 11, color: "#5a7a95" }}>
+                {r.scores?.overall >= 80 ? "Excellent" : r.scores?.overall >= 60 ? "Good — room for improvement" : r.scores?.overall >= 40 ? "Needs work" : "Critical issues detected"}
+              </div>
+              {/* Issue summary pills */}
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 12 }}>
+                {r.issue_counts?.critical > 0 && (
+                  <span style={{ background: "#ff174420", color: "#ff1744", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
+                    {r.issue_counts.critical} Critical
+                  </span>
+                )}
+                {r.issue_counts?.warning > 0 && (
+                  <span style={{ background: "#ff910020", color: "#ff9100", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
+                    {r.issue_counts.warning} Warnings
+                  </span>
+                )}
+                {r.issue_counts?.info > 0 && (
+                  <span style={{ background: "#00e5ff20", color: "#00e5ff", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
+                    {r.issue_counts.info} Info
+                  </span>
+                )}
+              </div>
+            </div>
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 16, display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ fontSize: 11, color: "#5a7a95", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8, fontWeight: 600 }}>Category Breakdown</div>
+              <RadarChart scores={r.scores || {}} />
+            </div>
+          </div>
+
+          {/* Score cards grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+            {Object.entries(scoreLabels).map(([key, meta]) => {
+              const val = r.scores?.[key] || 0;
+              const barColor = val >= 70 ? "#00e676" : val >= 40 ? "#ffd600" : "#ff1744";
+              return (
+                <div key={key} style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: "14px 16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: "#c8d6e5", fontWeight: 600 }}>{meta.icon} {meta.label}</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: barColor }}>{val}</span>
+                  </div>
+                  <div style={{ height: 6, background: "#0a1628", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ height: "100%", borderRadius: 3, width: `${val}%`, background: `linear-gradient(90deg, ${meta.color}, ${barColor})`, transition: "width 0.8s ease", boxShadow: `0 0 6px ${meta.color}40` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Data summary cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+            {[
+              { label: "Links", value: r.summary?.links?.total || 0, sub: `${r.summary?.links?.empty || 0} empty`, icon: "🔗", color: "#00e5ff" },
+              { label: "CTAs", value: r.summary?.links?.ctas || 0, sub: `${r.summary?.links?.buttons || 0} buttons`, icon: "🎯", color: r.summary?.links?.ctas > 0 ? "#00e676" : "#ff1744" },
+              { label: "Images", value: r.summary?.images?.total || 0, sub: `${r.summary?.images?.missing_alt || 0} no alt`, icon: "🖼️", color: "#ffd600" },
+              { label: "ARIA", value: (r.summary?.accessibility?.aria_roles || 0) + (r.summary?.accessibility?.aria_labels || 0), sub: `${r.summary?.accessibility?.aria_roles || 0} roles`, icon: "♿", color: "#d500f9" },
+            ].map((stat, i) => (
+              <div key={i} style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
+                <div style={{ fontSize: 20, marginBottom: 4 }}>{stat.icon}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: stat.color }}>{stat.value}</div>
+                <div style={{ fontSize: 11, color: "#c8d6e5", fontWeight: 600 }}>{stat.label}</div>
+                <div style={{ fontSize: 10, color: "#5a7a95", marginTop: 2 }}>{stat.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Issues list */}
+          {r.issues && r.issues.length > 0 && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20 }}>
+              <h4 style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 600, color: "#ff6d00", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                Issues Found ({r.issues.length})
+              </h4>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {r.issues.map((issue, i) => (
+                  <div key={i} style={{
+                    background: "#0a1628", borderRadius: 10, border: `1px solid ${sevColor[issue.severity]}30`,
+                    borderLeft: `3px solid ${sevColor[issue.severity]}`, overflow: "hidden",
+                    cursor: "pointer", transition: "all 0.2s ease",
+                  }} onClick={() => setExpandedIssue(expandedIssue === i ? null : i)}>
+                    <div style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span>{sevIcon[issue.severity]}</span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: "#e0e6ed" }}>{issue.title}</div>
+                          <div style={{ fontSize: 10, color: "#5a7a95", marginTop: 2 }}>
+                            <span style={{ background: `${sevColor[issue.severity]}20`, color: sevColor[issue.severity], padding: "1px 6px", borderRadius: 4, marginRight: 6, fontSize: 9, fontWeight: 600, textTransform: "uppercase" }}>{issue.severity}</span>
+                            {issue.category} • Priority {issue.priority}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ color: "#5a7a95", fontSize: 14, transform: expandedIssue === i ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
+                    </div>
+                    {expandedIssue === i && (
+                      <div style={{ padding: "0 16px 14px", borderTop: "1px solid #1a2d42" }}>
+                        <div style={{ fontSize: 12, color: "#8899aa", lineHeight: 1.6, marginTop: 10 }}>{issue.description}</div>
+                        <div style={{ marginTop: 8, padding: "8px 12px", background: "#0d1b2a", borderRadius: 8, borderLeft: "2px solid #00e676" }}>
+                          <div style={{ fontSize: 10, color: "#00e676", fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>Recommendation</div>
+                          <div style={{ fontSize: 12, color: "#c8d6e5", lineHeight: 1.5 }}>{issue.fix}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* AI Recommendations */}
+          {r.ai_recommendations && (
+            <div style={{ background: "#0d1b2a", border: "1px solid #1a2d42", borderRadius: 16, padding: 20, borderLeft: "3px solid #ff6d00" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#ff6d00", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                🤖 AI Recommendations
+              </h4>
+              <div style={{ color: "#c8d6e5", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "'IBM Plex Sans', sans-serif" }}>
+                {r.ai_recommendations}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

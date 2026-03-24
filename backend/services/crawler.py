@@ -197,8 +197,7 @@ async def crawl(url: str, depth: int = 3) -> str:
     # AI summary only if we have enough data
     if crawl_data["total_crawled"] >= 3:
         try:
-            ai_summary = await asyncio.to_thread(
-                ask_ai,
+            ai_summary = await ask_ai(
                 SYSTEM_PROMPT,
                 f"Crawl report:\n\n{report}\n\nProvide architecture assessment and recommendations.",
                 1500,

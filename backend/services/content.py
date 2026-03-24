@@ -204,8 +204,7 @@ async def analyze(url: str, target_keywords: str = "") -> str:
     report = _format_content_report(url, content_data, kw_data)
 
     # AI for quality analysis and gap recommendations
-    ai_analysis = await asyncio.to_thread(
-        ask_ai,
+    ai_analysis = await ask_ai(
         SYSTEM_PROMPT,
         f"Content analysis:\n\n{report}\n\n"
         f"First 500 chars of page content: {content_data.get('full_text', '')[:500]}\n\n"

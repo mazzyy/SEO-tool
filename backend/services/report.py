@@ -116,8 +116,7 @@ async def generate(url: str, sections: dict[str, bool]) -> str:
 
     selected = [k for k, v in sections.items() if v]
 
-    report = await asyncio.to_thread(
-        ask_ai,
+    report = await ask_ai(
         SYSTEM_PROMPT,
         f"Generate a full SEO audit report for: {url}\n"
         f"Selected sections: {', '.join(selected)}\n\n"

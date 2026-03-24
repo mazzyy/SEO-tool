@@ -63,80 +63,230 @@ def _extract_ux_data(html: str, soup) -> dict:
     return data
 
 
-def _format_ux_data(data: dict) -> str:
-    lines = ["PROGRAMMATIC UX DATA", "=" * 40]
+def _compute_scores(data: dict) -> dict:
+    """Compute category scores 0-100 from programmatic data."""
+    scores = {}
 
-    lines.append(f"\n📱 RESPONSIVE DESIGN")
-    lines.append(f"  Viewport meta: {'✅ Present' if data['has_viewport'] else '❌ Missing'}")
-    if data['viewport_content']:
-        lines.append(f"  Viewport content: {data['viewport_content']}")
+    # 1. Visual Hierarchy (based on heading structure)
+    vh = 50
+    if data["h1_count"] == 1:
+        vh += 25
+    elif data["h1_count"] > 1:
+        vh += 10
+    heading_levels = len(data["headings"])
+    vh += min(heading_levels * 8, 25)
+    scores["visual_hierarchy"] = min(vh, 100)
 
-    lines.append(f"\n🖼️ IMAGES")
-    lines.append(f"  Total images: {data['total_images']}")
-    lines.append(f"  Missing alt text: {data['images_missing_alt']}")
-    if data['missing_alt_examples']:
-        for ex in data['missing_alt_examples']:
-            lines.append(f"    - {ex}")
+    # 2. Navigation (links + CTAs)
+    nav = 40
+    if data["total_links"] >= 5:
+        nav += 15
+    if data["total_links"] >= 10:
+        nav += 10
+    if data["cta_count"] >= 1:
+        nav += 20
+    if data["cta_count"] >= 3:
+        nav += 10
+    if data["empty_links"] == 0:
+        nav += 5
+    scores["navigation"] = min(nav, 100)
 
-    lines.append(f"\n📑 HEADING STRUCTURE")
-    lines.append(f"  H1 tags: {data['h1_count']} {'✅' if data['h1_count'] == 1 else '⚠️ Should be exactly 1'}")
-    for level, texts in data['headings'].items():
-        lines.append(f"  {level}: {len(texts)} — {', '.join(texts[:3])}")
+    # 3. Mobile Responsiveness
+    mobile = 30
+    if data["has_viewport"]:
+        mobile += 40
+    if "width=device-width" in data.get("viewport_content", ""):
+        mobile += 15
+    if "initial-scale" in data.get("viewport_content", ""):
+        mobile += 15
+    scores["mobile_responsiveness"] = min(mobile, 100)
 
-    lines.append(f"\n♿ ACCESSIBILITY")
-    lines.append(f"  ARIA roles: {data['aria_roles']}")
-    lines.append(f"  ARIA labels: {data['aria_labels']}")
-    lines.append(f"  Forms: {data['form_count']} | Inputs: {data['input_count']} | Labels: {data['label_count']}")
-    if data['input_count'] > data['label_count']:
-        lines.append(f"  ⚠️ {data['input_count'] - data['label_count']} inputs may lack associated labels")
+    # 4. Accessibility
+    acc = 30
+    if data["aria_roles"] > 0:
+        acc += 15
+    if data["aria_roles"] >= 5:
+        acc += 10
+    if data["aria_labels"] > 0:
+        acc += 10
+    if data["aria_labels"] >= 3:
+        acc += 5
+    if data["images_missing_alt"] == 0 and data["total_images"] > 0:
+        acc += 15
+    elif data["total_images"] == 0:
+        acc += 10
+    if data["input_count"] > 0 and data["label_count"] >= data["input_count"]:
+        acc += 15
+    elif data["input_count"] == 0:
+        acc += 5
+    scores["accessibility"] = min(acc, 100)
 
-    lines.append(f"\n🔗 LINKS & CTAs")
-    lines.append(f"  Total links: {data['total_links']}")
-    lines.append(f"  Empty links (no text): {data['empty_links']}")
-    lines.append(f"  CTAs detected: {data['cta_count']}")
+    # 5. Content Readability
+    cr = 40
+    if data["h1_count"] == 1:
+        cr += 15
+    total_headings = sum(len(v) for v in data["headings"].values())
+    cr += min(total_headings * 5, 25)
+    if data["total_images"] > 0:
+        cr += 10
+    if data["total_links"] >= 3:
+        cr += 10
+    scores["content_readability"] = min(cr, 100)
 
-    return "\n".join(lines)
+    # 6. Trust & Conversion
+    tc = 20
+    if data["cta_count"] >= 1:
+        tc += 25
+    if data["cta_count"] >= 3:
+        tc += 10
+    if data["total_images"] > 0:
+        tc += 10
+    if data["form_count"] > 0:
+        tc += 15
+    if data["button_count"] >= 2:
+        tc += 10
+    if data["total_links"] >= 5:
+        tc += 10
+    scores["trust_conversion"] = min(tc, 100)
+
+    # Overall score (weighted average)
+    weights = {
+        "visual_hierarchy": 0.15,
+        "navigation": 0.20,
+        "mobile_responsiveness": 0.20,
+        "accessibility": 0.20,
+        "content_readability": 0.10,
+        "trust_conversion": 0.15,
+    }
+    overall = sum(scores[k] * weights[k] for k in weights)
+    scores["overall"] = round(overall)
+
+    return scores
 
 
-SYSTEM_PROMPT = """You are an expert UI/UX auditor. You have been given programmatic analysis data from a website.
-Using this data, provide a comprehensive UI/UX audit covering:
+def _generate_issues(data: dict, scores: dict) -> list:
+    """Generate specific issues with severity and recommendations."""
+    issues = []
 
-1. Visual Hierarchy — heading structure assessment
-2. Navigation — link quality, CTA effectiveness
-3. Mobile Responsiveness — viewport config
-4. Accessibility — WCAG compliance based on alt texts, ARIA, form labels
-5. Content Readability — heading hierarchy, structure
-6. Trust Signals — CTA quality
+    # Visual Hierarchy
+    if data["h1_count"] == 0:
+        issues.append({"category": "Visual Hierarchy", "severity": "critical", "title": "Missing H1 Tag", "description": "No H1 heading found. Every page needs exactly one H1 for SEO and accessibility.", "fix": "Add a clear, descriptive H1 tag as the main heading.", "priority": 1})
+    elif data["h1_count"] > 1:
+        issues.append({"category": "Visual Hierarchy", "severity": "warning", "title": f"Multiple H1 Tags ({data['h1_count']})", "description": "Multiple H1 tags dilute heading hierarchy. Best practice is exactly one H1 per page.", "fix": "Keep one primary H1 and convert others to H2 or lower.", "priority": 3})
+    if len(data["headings"]) <= 2:
+        issues.append({"category": "Visual Hierarchy", "severity": "warning", "title": "Shallow Heading Structure", "description": f"Only {len(data['headings'])} heading levels used. A rich hierarchy (H1→H4) helps scannability and SEO.", "fix": "Add descriptive H2/H3/H4 subheadings to break content into scannable sections.", "priority": 4})
 
-For each issue found:
-- Severity: 🔴 Critical / 🟡 Warning / 🟢 Minor
-- Impact description
-- Fix recommendation
-- Priority (1-10)
+    # Navigation
+    if data["cta_count"] == 0:
+        issues.append({"category": "Navigation", "severity": "critical", "title": "No CTAs Detected", "description": "No call-to-action buttons or links found. Visitors have no clear next step.", "fix": "Add a prominent primary CTA above the fold (e.g., 'Get Started', 'Sign Up').", "priority": 1})
+    if data["empty_links"] > 0:
+        issues.append({"category": "Navigation", "severity": "warning", "title": f"{data['empty_links']} Empty Links", "description": "Links without visible text are inaccessible and confusing.", "fix": "Add descriptive text or aria-labels to all links.", "priority": 3})
+    if data["total_links"] < 3:
+        issues.append({"category": "Navigation", "severity": "warning", "title": "Very Few Links", "description": f"Only {data['total_links']} links found. Limited navigation hurts usability.", "fix": "Add navigation menu, footer links, and internal content links.", "priority": 4})
 
-End with an overall UI/UX score /100 and a prioritized action plan.
-Be specific and reference the actual data provided."""
+    # Mobile
+    if not data["has_viewport"]:
+        issues.append({"category": "Mobile", "severity": "critical", "title": "Missing Viewport Meta Tag", "description": "Without viewport meta, the page won't display correctly on mobile devices.", "fix": "Add <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"> to the <head>.", "priority": 1})
+
+    # Accessibility
+    if data["aria_roles"] == 0 and data["aria_labels"] == 0:
+        issues.append({"category": "Accessibility", "severity": "warning", "title": "No ARIA Landmarks", "description": "No ARIA roles or labels detected. Screen reader users can't navigate efficiently.", "fix": "Add landmark roles (banner, navigation, main, contentinfo) and aria-labels to key elements.", "priority": 3})
+    if data["images_missing_alt"] > 0:
+        issues.append({"category": "Accessibility", "severity": "warning", "title": f"{data['images_missing_alt']} Images Missing Alt Text", "description": "Images without alt text are invisible to screen readers and hurt SEO.", "fix": "Add descriptive alt attributes to all informational images.", "priority": 2})
+    if data["input_count"] > data["label_count"]:
+        missing = data["input_count"] - data["label_count"]
+        issues.append({"category": "Accessibility", "severity": "warning", "title": f"{missing} Inputs Without Labels", "description": "Form inputs without labels are inaccessible. Users can't identify what to enter.", "fix": "Associate a <label> with every <input> using the 'for' attribute.", "priority": 2})
+
+    # Content
+    if data["total_images"] == 0:
+        issues.append({"category": "Content", "severity": "info", "title": "No Images Found", "description": "Pages without images can feel sterile and reduce engagement. Visual content improves trust and conversion.", "fix": "Add relevant images (hero, screenshots, team photos) with descriptive alt text.", "priority": 5})
+
+    # Trust
+    if data["form_count"] == 0 and data["cta_count"] == 0:
+        issues.append({"category": "Trust & Conversion", "severity": "critical", "title": "No Conversion Elements", "description": "No forms or CTAs detected. The page lacks any mechanism for user engagement or conversion.", "fix": "Add contact forms, newsletter signups, or clear action buttons.", "priority": 1})
+
+    # Sort by priority
+    issues.sort(key=lambda x: x["priority"])
+    return issues
 
 
-async def analyze(url: str, pages: list[str]) -> str:
+def _build_data_summary(data: dict) -> dict:
+    """Build a concise data summary for the frontend cards."""
+    return {
+        "responsive": {
+            "has_viewport": data["has_viewport"],
+            "viewport_content": data["viewport_content"],
+        },
+        "images": {
+            "total": data["total_images"],
+            "missing_alt": data["images_missing_alt"],
+            "examples": data["missing_alt_examples"],
+        },
+        "headings": {
+            "h1_count": data["h1_count"],
+            "structure": data["headings"],
+            "total_levels": len(data["headings"]),
+        },
+        "accessibility": {
+            "aria_roles": data["aria_roles"],
+            "aria_labels": data["aria_labels"],
+            "forms": data["form_count"],
+            "inputs": data["input_count"],
+            "labels": data["label_count"],
+        },
+        "links": {
+            "total": data["total_links"],
+            "empty": data["empty_links"],
+            "ctas": data["cta_count"],
+            "buttons": data["button_count"],
+        },
+    }
+
+
+SYSTEM_PROMPT = """You are an expert UI/UX auditor. Given programmatic analysis data and scores, provide:
+1. A concise executive summary (2-3 sentences about the overall UX quality)
+2. Top 3 most impactful recommendations with specific implementation details
+3. Quick wins that can be done today
+
+Keep it concise and actionable. No more than 300 words total. Reference the actual scores."""
+
+
+async def analyze(url: str, pages: list[str]) -> dict:
     resp = await asyncio.to_thread(fetch_page, url)
     if resp is None:
-        return f"Error: Could not fetch {url}. Check the URL and try again."
+        return {"error": f"Could not fetch {url}. Check the URL and try again."}
 
     soup = parse_html(resp.text)
     ux_data = _extract_ux_data(resp.text, soup)
-    data_report = _format_ux_data(ux_data)
+    scores = _compute_scores(ux_data)
+    issues = _generate_issues(ux_data, scores)
+    summary = _build_data_summary(ux_data)
 
-    page_str = ""
-    if pages and any(p.strip() for p in pages):
-        page_str = f"\nSpecific pages requested: {', '.join(p for p in pages if p.strip())}"
+    result = {
+        "url": url,
+        "scores": scores,
+        "issues": issues,
+        "summary": summary,
+        "issue_counts": {
+            "critical": len([i for i in issues if i["severity"] == "critical"]),
+            "warning": len([i for i in issues if i["severity"] == "warning"]),
+            "info": len([i for i in issues if i["severity"] == "info"]),
+        },
+    }
 
-    result = await asyncio.to_thread(
-        ask_ai,
-        SYSTEM_PROMPT,
-        f"Website: {url}{page_str}\n\nHere is the programmatic analysis data:\n\n{data_report}\n\n"
-        "Please provide a comprehensive UI/UX audit based on this data.",
-        3500,
-    )
+    # AI for concise recommendations
+    try:
+        report_text = f"Overall: {scores['overall']}/100, Visual Hierarchy: {scores['visual_hierarchy']}/100, Navigation: {scores['navigation']}/100, Mobile: {scores['mobile_responsiveness']}/100, Accessibility: {scores['accessibility']}/100, Content: {scores['content_readability']}/100, Trust: {scores['trust_conversion']}/100.\n"
+        report_text += f"Issues: {len(issues)} total ({result['issue_counts']['critical']} critical, {result['issue_counts']['warning']} warnings).\n"
+        report_text += f"Data: {ux_data['total_links']} links, {ux_data['cta_count']} CTAs, {ux_data['total_images']} images, {ux_data['h1_count']} H1s, ARIA roles: {ux_data['aria_roles']}, viewport: {ux_data['has_viewport']}"
 
-    return data_report + "\n\n" + "─" * 60 + "\nAI UI/UX ANALYSIS\n" + "─" * 60 + "\n\n" + result
+        ai_text = await ask_ai(
+            SYSTEM_PROMPT,
+            f"Website: {url}\n\n{report_text}",
+            800,
+        )
+        result["ai_recommendations"] = ai_text
+    except Exception:
+        pass
+
+    return result

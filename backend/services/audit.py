@@ -211,8 +211,7 @@ async def full_audit(url: str) -> str:
 
     data_report = _format_audit_data(url, tech, onpage, robots, sitemap)
 
-    ai_analysis = await asyncio.to_thread(
-        ask_ai,
+    ai_analysis = await ask_ai(
         SYSTEM_PROMPT,
         f"Website: {url}\n\nHere is the programmatic audit data:\n\n{data_report}\n\n"
         "Produce a scored SEO audit with actionable recommendations.",
