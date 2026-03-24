@@ -182,9 +182,14 @@ def _is_captcha(html: str) -> bool:
     return any(s in html_lower for s in signals)
 
 
-async def _google_scrape(keyword: str, num_pages: int = 10) -> Optional[list[dict]]:
+async def _google_scrape(keyword: str, num_pages: int = 10, target_url: str = "") -> Optional[list[dict]]:
+    """
+    Direct Google scraping fallback.
+    If target_url is provided, stops after the page where the target is found.
+    """
     all_results = []
     position = 1
+    target_found = False
 
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
         for page in range(num_pages):
@@ -266,7 +271,17 @@ async def _google_scrape(keyword: str, num_pages: int = 10) -> Optional[list[dic
                     position += 1
                     page_count += 1
 
+                    # Check if we found the target
+                    if target_url and _domain_match(link, target_url):
+                        target_found = True
+
                 logger.info(f"[Scrape] Page {page + 1}: {page_count} results")
+
+                # Stop early if target found
+                if target_found:
+                    logger.info(f"[Scrape] Target found on page {page + 1}, stopping early")
+                    break
+
                 if page_count == 0:
                     break
 
@@ -452,13 +467,13 @@ async def analyze(url: str, keywords: list[str], max_pages: int = 10) -> dict:
         search_results = None
         source = None
 
-        # Tier 1: Serper.dev
-        search_results = await _serper_search(keyword, num_pages=max_pages)
+        # Tier 1: Serper.dev (stops early if target found)
+        search_results = await _serper_search(keyword, num_pages=max_pages, target_url=url)
         if search_results:
             source = "serper_api"
         else:
-            # Tier 2: Direct scraping
-            search_results = await _google_scrape(keyword, num_pages=max_pages)
+            # Tier 2: Direct scraping (stops early if target found)
+            search_results = await _google_scrape(keyword, num_pages=max_pages, target_url=url)
             if search_results:
                 source = "google_scrape"
 
